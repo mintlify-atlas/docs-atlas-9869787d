@@ -1,0 +1,156 @@
+{
+  "projectType": "saas",
+  "projectName": "Airbyte Platform",
+  "projectDescription": "Open-source data integration platform for building ELT pipelines from any source to any destination, with 300+ connectors, a visual UI, and a powerful public API.",
+  "theme": "sequoia",
+  "primaryColor": "#5d59e6",
+  "lightColor": "#aca4e2",
+  "darkColor": "#0c0c34",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Overview",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "core-concepts"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/components",
+              "architecture/workers-and-sync",
+              "architecture/feature-flags"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Deployment",
+        "groups": [
+          {
+            "group": "Self-Hosted",
+            "pages": [
+              "deployment/docker",
+              "deployment/kubernetes",
+              "deployment/helm-charts",
+              "deployment/configuration"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "deployment/upgrading",
+              "deployment/scaling",
+              "deployment/monitoring",
+              "deployment/security"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Connectors",
+        "groups": [
+          {
+            "group": "Using Connectors",
+            "pages": [
+              "connectors/overview",
+              "connectors/sources",
+              "connectors/destinations",
+              "connectors/connections"
+            ]
+          },
+          {
+            "group": "Building Connectors",
+            "pages": [
+              "connectors/building/overview",
+              "connectors/building/low-code-cdk",
+              "connectors/building/python-cdk",
+              "connectors/building/connector-builder"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "API",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/connections",
+              "api/sources",
+              "api/destinations",
+              "api/jobs",
+              "api/workspaces",
+              "api/organizations",
+              "api/users",
+              "api/permissions",
+              "api/streams",
+              "api/health"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Contributing",
+        "groups": [
+          {
+            "group": "Development",
+            "pages": [
+              "contributing/overview",
+              "contributing/local-development",
+              "contributing/backend",
+              "contributing/frontend"
+            ]
+          },
+          {
+            "group": "Community",
+            "pages": [
+              "contributing/code-of-conduct",
+              "contributing/security"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "300+ pre-built source and destination connectors for APIs, databases, data warehouses, and data lakes",
+    "Visual web UI for managing connections, syncs, and workspace settings",
+    "Low-code Connector Development Kit (CDK) and Python CDK for building custom connectors",
+    "Temporal-based workflow orchestration for reliable sync scheduling and retry logic",
+    "Public REST API for programmatic control of sources, destinations, connections, and jobs",
+    "Kubernetes-native deployment via Helm charts with support for multi-plane architecture",
+    "Feature flag management with granular workspace, user, and organization-level targeting",
+    "OAuth 2.0 and SSO (Keycloak) authentication with role-based access control",
+    "Connector Builder UI for creating API connectors without writing code",
+    "Airbyte Embedded for white-labeling data integrations into third-party products"
+  ],
+  "publicApiSurface": [
+    "GET/POST /v1/connections — Manage sync connections between sources and destinations",
+    "GET/POST /v1/sources — Create and manage data sources",
+    "GET/POST /v1/destinations — Create and manage data destinations",
+    "GET/POST /v1/jobs — Trigger and monitor sync jobs",
+    "GET/POST /v1/workspaces — Manage workspaces",
+    "GET/POST /v1/organizations — Manage organizations",
+    "GET/POST /v1/users — Manage user accounts",
+    "GET/POST /v1/permissions — Manage user permissions",
+    "GET/POST /v1/streams — Inspect and configure data streams",
+    "GET /v1/health — Health check endpoint",
+    "GET/POST /v1/config_templates/sources — Airbyte Embedded config templates",
+    "POST /v1/jobs/sync — Manually trigger a sync job",
+    "POST /v1/jobs/reset — Reset a connection's data"
+  ]
+}
