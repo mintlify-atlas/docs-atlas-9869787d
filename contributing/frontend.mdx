@@ -1,0 +1,337 @@
+---
+title: "Frontend development"
+description: "How to set up and contribute to the Airbyte web application."
+---
+
+The Airbyte web app (`airbyte-webapp`) is a React application written in TypeScript. It is built with Vite and uses pnpm as its package manager. The compiled output is static HTML, JavaScript, and CSS, served via nginx inside the `airbyte-webapp` Docker image. The same nginx instance acts as a reverse proxy, routing API calls to the backend services.
+
+## Tech stack
+
+| Tool | Version | Purpose |
+|------|---------|----------|
+| TypeScript | — | Primary language |
+| React | — | UI framework |
+| Vite | — | Build tool and dev server |
+| pnpm | 8.6.12 | Package manager |
+| Node.js | 20.19.0 | Runtime (pinned via Volta) |
+| TanStack Query | v4 | Server state and data fetching |
+| React Hook Form | — | Form state management |
+| orval | — | OpenAPI client generation |
+| Jest | — | Unit tests |
+| Playwright | — | End-to-end tests |
+| ESLint + Prettier | — | Linting and formatting |
+| stylelint | — | CSS/SCSS linting |
+
+## Setting up the dev environment
+
+<Steps>
+  <Step title="Install Node.js and pnpm">
+    The project pins exact versions via [Volta](https://volta.sh/). Install Volta and it will automatically select the correct Node.js and pnpm versions from `package.json`:
+
+    ```bash
+    curl https://get.volta.sh | bash
+    ```
+
+    Alternatively, install Node.js **20.19.0** and pnpm **8.6.12** manually.
+  </Step>
+  <Step title="Install dependencies">
+    From the `airbyte-webapp` directory:
+
+    ```bash
+    cd airbyte-webapp
+    pnpm install
+    ```
+  </Step>
+  <Step title="Start the dev server">
+    ```bash
+    pnpm start
+    ```
+
+    This runs `node ./scripts/start-dev.js` which starts Vite in development mode. The dev server proxies API requests to a backend running at `http://localhost:8001`. You need a running backend — see [local development setup](/contributing/local-development) for how to start one.
+  </Step>
+</Steps>
+
+## Building the webapp
+
+You can build the webapp independently:
+
+```bash
+# Build only the static assets and Docker image:
+./gradlew :oss:airbyte-webapp:assemble
+
+# Full build including tests:
+./gradlew :oss:airbyte-webapp:build
+```
+
+Or using pnpm directly from the `airbyte-webapp` directory:
+
+```bash
+pnpm run build
+```
+
+The build script regenerates the OpenAPI client before compiling:
+
+```bash
+# Regenerate TypeScript client from OpenAPI specs:
+pnpm run generate-client
+```
+
+## Project structure
+
+The webapp source lives in `airbyte-webapp/src/`. The structure separates shared code (used by both OSS and Cloud) from Cloud-only additions:
+
+```
+src/
+├── App.tsx                # OSS entrypoint
+├── core/                  # Core systems shared by OSS and Cloud
+│   ├── api/               # API layer (generated clients, hooks, types)
+│   ├── config/            # Application configuration
+│   ├── domain/            # Domain models
+│   ├── services/          # Cross-domain services (auth, analytics, features)
+│   └── utils/             # Shared utilities and hooks
+├── area/                  # Domain areas shared by OSS and Cloud
+│   ├── connection/        # Connection management
+│   ├── connector/         # Connector management
+│   ├── connectorBuilder/  # Connector Builder UI
+│   ├── dataActivation/    # Data activation (reverse ETL)
+│   ├── layout/            # Layout components (sidebar, main layout)
+│   ├── organization/      # Organization management
+│   ├── settings/          # Settings pages
+│   └── workspace/         # Workspace management
+├── components/
+│   └── ui/                # Reusable UI primitives (Button, Modal, Input…)
+├── pages/                 # Route handlers for OSS and Cloud
+├── cloud/                 # Cloud-only additions
+│   ├── App.tsx            # Cloud entrypoint
+│   ├── area/billing/      # Billing domain
+│   ├── services/auth/     # Cloud authentication
+│   └── services/thirdParty/ # Third-party integrations
+├── locales/               # i18n translation files
+├── scss/                  # Global styles, variables, themes
+├── test-utils/            # Test utilities and mock data
+└── types/                 # Global TypeScript types
+```
+
+**Key principle:** `cloud/` contains only Cloud-specific additions. Shared code cannot import from `cloud/`.
+
+### Where to put new code
+
+| What you're adding | Where it goes |
+|--------------------|---------------|
+| New connection feature | `src/area/connection/` |
+| New connector feature | `src/area/connector/` |
+| Reusable UI component (Button, Modal) | `src/components/ui/` |
+| New API hook | `src/core/api/hooks/` |
+| New page / route | `src/pages/` |
+| Cross-domain service | `src/core/services/` |
+| Billing feature (Cloud only) | `src/cloud/area/billing/` |
+| Cloud authentication | `src/cloud/services/auth/` |
+
+## Component development
+
+Each component lives in its own directory following this structure:
+
+```
+ComponentName/
+├── ComponentName.tsx              # Component implementation
+├── ComponentName.module.scss      # Scoped CSS Modules styles
+├── ComponentName.test.tsx         # Unit tests
+├── ComponentName.stories.tsx      # Storybook stories (optional)
+└── index.ts                       # Re-export for clean imports
+```
+
+### Import rules
+
+The codebase enforces import restrictions via ESLint:
+
+**API imports** — Outside of `core/api/`, only import from the public API surface:
+
+```typescript
+// Correct
+import { useConnection } from "core/api";
+import type { ConnectionRead } from "core/api/types/AirbyteClient";
+
+// Wrong — do not import from generated internals
+import { getConnection } from "core/api/generated/AirbyteClient";
+```
+
+**Local storage** — Use the wrapper hook, not `react-use` directly:
+
+```typescript
+// Correct
+import { useLocalStorage } from "core/utils/useLocalStorage";
+```
+
+**Lodash** — Import individual functions, not the full bundle:
+
+```typescript
+// Correct
+import get from "lodash/get";
+
+// Wrong
+import { get } from "lodash";
+```
+
+**Links** — Use the internal `Link` component:
+
+```typescript
+// Correct
+import { Link } from "components/ui/Link";
+```
+
+## API integration
+
+API clients are generated from the OpenAPI specs using **orval**. The generated code lives in `src/core/api/generated/`. You should never edit generated files directly.
+
+To add a new API hook, wrap the generated function in a manual React Query hook in `src/core/api/hooks/`:
+
+```typescript
+// src/core/api/hooks/connections.ts
+export const useConnection = (connectionId: string) => {
+  const requestOptions = useRequestOptions();
+  return useSuspenseQuery(
+    connectionKeys.detail(connectionId),
+    () => getConnection({ connectionId }, requestOptions)
+  );
+};
+```
+
+This pattern gives you type-safe API calls, automatic caching and revalidation, consistent error handling, and request authentication.
+
+## Code style
+
+See `airbyte-webapp/STYLEGUIDE.md` for the full style guide. Highlights:
+
+### TypeScript
+
+- Prefer type unions over enums for component props:
+
+  ```typescript
+  // Correct
+  type ButtonVariant = "primary" | "secondary" | "danger";
+
+  // Wrong
+  enum ButtonVariant { Primary = "primary", Secondary = "secondary" }
+  ```
+
+- Use early returns to flatten nested conditionals.
+
+- Chain data transformations instead of storing intermediate variables:
+
+  ```typescript
+  // Correct
+  return data
+    .filter((item) => item.id > 0)
+    .map((item) => item.name);
+  ```
+
+- Always use immutable state updates — never mutate objects or arrays directly.
+
+### Styling
+
+Styles use **CSS Modules** with a BEM naming scheme. Each `.module.scss` file corresponds to one component:
+
+```scss
+// MyComponent.module.scss
+@use "scss/colors";
+@use "scss/variables";
+
+.myComponent {
+  background-color: colors.$blue-400;
+
+  &--highlighted {
+    border: variables.$border-thick solid colors.$green-400;
+  }
+
+  &__element {
+    background-color: colors.$grey-300;
+  }
+}
+```
+
+For layout, prefer the `FlexContainer` and `Box` layout components over custom CSS:
+
+```typescript
+import { FlexContainer } from "components/ui/Flex";
+import { Box } from "components/ui/Box";
+
+<FlexContainer direction="row" gap="md" alignItems="center">
+  <Box p="lg">{children}</Box>
+</FlexContainer>
+```
+
+### ESLint rule overrides
+
+When disabling an ESLint rule, always leave an explanatory comment:
+
+```typescript
+// Correct
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Legacy API returns untyped data
+const data: any = await legacyApiCall();
+
+// Wrong — missing explanation
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const data: any = await legacyApiCall();
+```
+
+## Linting and formatting
+
+```bash
+# Run ESLint
+pnpm run lint
+
+# Run Prettier (format in place)
+pnpm run format
+
+# Run stylelint on CSS/SCSS
+pnpm run stylelint
+
+# Check Prettier without modifying files
+pnpm run prettier:ci
+```
+
+VSCode workspace settings and recommended extensions are checked into the repository. Opening the `airbyte-webapp` folder in VSCode gives you ESLint, Prettier, and stylelint integration automatically.
+
+## Testing
+
+### Unit tests with Jest
+
+Unit tests live alongside the files they test, using the `.test.ts` or `.test.tsx` extension.
+
+```bash
+# Run tests in watch mode
+pnpm test
+
+# Run tests once (CI mode)
+pnpm test:ci
+
+# Run tests with coverage
+pnpm test:coverage
+```
+
+### End-to-end tests with Playwright
+
+Playwright e2e tests live in the `/playwright` directory.
+
+```bash
+# Build and start the OSS backend first:
+make dev.up.oss
+
+# Run Playwright in interactive UI mode (recommended for local dev):
+make test.e2e.oss.open
+
+# Run Playwright headlessly (mirrors CI output):
+make test.e2e.oss
+```
+
+The e2e test suite starts additional Docker containers for test databases and a dummy API server. It tests the full platform end-to-end, including the scheduler, workers, and connector builder.
+
+### Storybook
+
+Component stories are written with Storybook:
+
+```bash
+pnpm run storybook
+```
+
+This starts Storybook on port 9009.

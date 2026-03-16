@@ -1,0 +1,254 @@
+---
+title: "Connections API"
+description: "Create, update, and manage connections between sources and destinations."
+---
+
+A connection links a source to a destination and defines how data flows between them: which streams to sync, how often to run, and how to handle schema changes.
+
+## Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/connections` | List connections |
+| `POST` | `/v1/connections` | Create a connection |
+| `GET` | `/v1/connections/{connectionId}` | Get connection details |
+| `PATCH` | `/v1/connections/{connectionId}` | Update a connection |
+| `DELETE` | `/v1/connections/{connectionId}` | Delete a connection |
+
+To trigger a sync or reset, use the [Jobs API](/api/jobs).
+
+---
+
+## List connections
+
+<CodeGroup>
+```bash curl
+curl https://api.airbyte.com/v1/connections \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+`GET /v1/connections`
+
+Returns all connections accessible to the authenticated user.
+
+### Query parameters
+
+<ParamField query="workspaceIds" type="array of UUID">
+  Filter by workspace. Pass one or more workspace UUIDs. If omitted, all accessible workspaces are returned.
+</ParamField>
+
+<ParamField query="tagIds" type="array of UUID">
+  Filter by tag UUID. Only connections with all specified tags are returned.
+</ParamField>
+
+<ParamField query="includeDeleted" type="boolean">
+  Include soft-deleted connections in the response. Defaults to `false`.
+</ParamField>
+
+<ParamField query="limit" type="integer">
+  Maximum number of connections to return. Minimum `1`, maximum `100`, default `20`.
+</ParamField>
+
+<ParamField query="offset" type="integer">
+  Number of connections to skip. Default `0`.
+</ParamField>
+
+### Response
+
+<ResponseField name="data" type="array" required>
+  Array of connection objects.
+  <Expandable title="Connection object">
+    <ResponseField name="connectionId" type="string (UUID)" required>Unique identifier for the connection.</ResponseField>
+    <ResponseField name="name" type="string" required>Display name of the connection.</ResponseField>
+    <ResponseField name="sourceId" type="string (UUID)" required>ID of the source.</ResponseField>
+    <ResponseField name="destinationId" type="string (UUID)" required>ID of the destination.</ResponseField>
+    <ResponseField name="workspaceId" type="string (UUID)" required>ID of the workspace that owns this connection.</ResponseField>
+    <ResponseField name="status" type="string" required>One of `active`, `inactive`, `deprecated`, `locked`.</ResponseField>
+    <ResponseField name="schedule" type="object" required>Sync schedule configuration.</ResponseField>
+    <ResponseField name="configurations" type="object" required>Stream-level configurations.</ResponseField>
+    <ResponseField name="namespaceDefinition" type="string">Where to store data: `source`, `destination`, or `custom_format`.</ResponseField>
+    <ResponseField name="namespaceFormat" type="string">Template string used when `namespaceDefinition` is `custom_format`.</ResponseField>
+    <ResponseField name="prefix" type="string">Prefix prepended to each stream name in the destination.</ResponseField>
+    <ResponseField name="nonBreakingSchemaUpdatesBehavior" type="string">How to handle non-breaking schema changes: `ignore`, `disable_connection`, `propagate_columns`, or `propagate_fully`.</ResponseField>
+    <ResponseField name="tags" type="array" required>Tags attached to this connection.</ResponseField>
+    <ResponseField name="createdAt" type="integer (int64)" required>Unix timestamp of creation.</ResponseField>
+    <ResponseField name="statusReason" type="string">Human-readable explanation of the current status.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="next" type="string">URL for the next page, or absent when on the last page.</ResponseField>
+<ResponseField name="previous" type="string">URL for the previous page.</ResponseField>
+
+---
+
+## Create a connection
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.airbyte.com/v1/connections \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sourceId": "95e66a59-8045-4307-9678-63bc3c9b8c93",
+    "destinationId": "e478de0d-a3a0-475c-b019-25f7dd29e281",
+    "name": "Postgres-to-Bigquery",
+    "schedule": {
+      "scheduleType": "cron",
+      "cronExpression": "0 0 * * *"
+    },
+    "status": "active"
+  }'
+```
+</CodeGroup>
+
+`POST /v1/connections`
+
+### Request body
+
+<ParamField body="sourceId" type="string (UUID)" required>
+  ID of the source connector.
+</ParamField>
+
+<ParamField body="destinationId" type="string (UUID)" required>
+  ID of the destination connector.
+</ParamField>
+
+<ParamField body="name" type="string">
+  Display name for the connection.
+</ParamField>
+
+<ParamField body="configurations" type="object">
+  Stream-level sync configurations. Contains a `streams` array of stream configuration objects.
+  <Expandable title="Stream configuration">
+    <ParamField body="name" type="string" required>Stream name.</ParamField>
+    <ParamField body="namespace" type="string">Stream namespace.</ParamField>
+    <ParamField body="syncMode" type="string">Sync mode, e.g. `full_refresh_overwrite`, `incremental_append`.</ParamField>
+    <ParamField body="cursorField" type="array of string">Path to the cursor field for incremental syncs.</ParamField>
+    <ParamField body="primaryKey" type="array">Paths to the primary key fields.</ParamField>
+    <ParamField body="selectedFields" type="array">Fields to include in the sync. All fields are synced if omitted.</ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="schedule" type="object">
+  Sync schedule.
+  <Expandable title="Schedule object">
+    <ParamField body="scheduleType" type="string" required>One of `manual` or `cron`.</ParamField>
+    <ParamField body="cronExpression" type="string">Required when `scheduleType` is `cron`. Standard cron expression.</ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="namespaceDefinition" type="string">
+  Where to write data in the destination: `source`, `destination` (default), or `custom_format`.
+</ParamField>
+
+<ParamField body="namespaceFormat" type="string">
+  Template for the namespace when `namespaceDefinition` is `custom_format`. Use `${SOURCE_NAMESPACE}` to mirror the source namespace.
+</ParamField>
+
+<ParamField body="prefix" type="string">
+  String prepended to each stream name in the destination, e.g. `airbyte_` turns `orders` into `airbyte_orders`.
+</ParamField>
+
+<ParamField body="nonBreakingSchemaUpdatesBehavior" type="string">
+  How Airbyte reacts to non-breaking source schema changes: `ignore` (default), `disable_connection`, `propagate_columns`, or `propagate_fully`.
+</ParamField>
+
+<ParamField body="status" type="string">
+  Initial status: `active` or `inactive`. Defaults to `active`.
+</ParamField>
+
+### Response
+
+Returns a [connection object](#response) on success with HTTP `200`.
+
+---
+
+## Get a connection
+
+<CodeGroup>
+```bash curl
+curl https://api.airbyte.com/v1/connections/9924bcd0-99be-453d-ba47-c2c9766f7da5 \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+`GET /v1/connections/{connectionId}`
+
+### Path parameters
+
+<ParamField path="connectionId" type="string (UUID)" required>
+  The ID of the connection to retrieve.
+</ParamField>
+
+### Response
+
+Returns a single [connection object](#response).
+
+---
+
+## Update a connection
+
+<CodeGroup>
+```bash curl
+curl -X PATCH https://api.airbyte.com/v1/connections/9924bcd0-99be-453d-ba47-c2c9766f7da5 \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Postgres-to-Bigquery-updated",
+    "status": "inactive"
+  }'
+```
+</CodeGroup>
+
+`PATCH /v1/connections/{connectionId}`
+
+Partially updates a connection. Only the fields you include in the request body are changed.
+
+### Path parameters
+
+<ParamField path="connectionId" type="string (UUID)" required>
+  The ID of the connection to update.
+</ParamField>
+
+### Request body
+
+All fields are optional. Provide only the fields you want to change.
+
+<ParamField body="name" type="string">New display name.</ParamField>
+<ParamField body="configurations" type="object">Updated stream configurations.</ParamField>
+<ParamField body="schedule" type="object">Updated schedule.</ParamField>
+<ParamField body="namespaceDefinition" type="string">Updated namespace definition.</ParamField>
+<ParamField body="namespaceFormat" type="string">Updated namespace format template.</ParamField>
+<ParamField body="prefix" type="string">Updated stream name prefix.</ParamField>
+<ParamField body="nonBreakingSchemaUpdatesBehavior" type="string">Updated schema change behavior.</ParamField>
+<ParamField body="status" type="string">Updated status: `active` or `inactive`.</ParamField>
+
+### Response
+
+Returns the updated [connection object](#response).
+
+---
+
+## Delete a connection
+
+<CodeGroup>
+```bash curl
+curl -X DELETE https://api.airbyte.com/v1/connections/9924bcd0-99be-453d-ba47-c2c9766f7da5 \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+`DELETE /v1/connections/{connectionId}`
+
+Permanently deletes a connection. This action cannot be undone.
+
+### Path parameters
+
+<ParamField path="connectionId" type="string (UUID)" required>
+  The ID of the connection to delete.
+</ParamField>
+
+### Response
+
+Returns HTTP `204 No Content` on success.

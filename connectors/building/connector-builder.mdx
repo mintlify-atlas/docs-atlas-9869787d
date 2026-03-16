@@ -1,0 +1,137 @@
+---
+title: "Connector Builder"
+description: "Build REST API source connectors using the no-code Connector Builder UI in Airbyte."
+keywords: ["connector builder", "no-code", "REST API", "custom connector", "streams", "pagination"]
+---
+
+The Connector Builder is a no-code interface built into the Airbyte web app. Use it to create REST API source connectors by filling out forms and testing responses in real time — no local tooling or Python knowledge required.
+
+<Note>
+  The Connector Builder creates source connectors only. To build a destination connector or connect to a non-REST source, use the [Python CDK](/connectors/building/python-cdk).
+</Note>
+
+## Open the Connector Builder
+
+In the Airbyte sidebar, click **Connector Builder**. You see a list of any connectors you have already built in this workspace. Click **New connector** to start a new one.
+
+## Build a connector
+
+<Steps>
+  <Step title="Enter a connector name">
+    Give your connector a descriptive name. This appears in the connector catalog when you publish it.
+  </Step>
+
+  <Step title="Configure the global settings">
+    Open the **Global config** section in the left sidebar to set:
+
+    - **Check connection stream** — which stream Airbyte calls during a connection test (`check` operation)
+    - **Concurrency level** — how many stream partitions to fetch in parallel (optional)
+    - **API budget** — rate limit configuration to avoid exceeding API quotas (optional)
+  </Step>
+
+  <Step title="Define connector inputs">
+    Open the **Inputs** section to define the fields your connector expects from users — API keys, base URLs, start dates, and so on. Each input maps to a `spec` field:
+
+    - **Field ID** — referenced in stream configuration as `{{ config['field_id'] }}`
+    - **Label** — displayed in the setup form
+    - **Type** — string, integer, boolean, or OAuth
+    - **Secret** — toggle on to mask the value after saving
+    - **Required** — whether the field must be provided
+  </Step>
+
+  <Step title="Add a stream">
+    Click **Add stream** in the sidebar. Each stream maps to one API endpoint. For each stream, configure:
+
+    - **Stream name** — the name users see in the stream selection table
+    - **API URL** — the full endpoint URL, e.g. `https://api.example.com/v2/users`
+    - **HTTP method** — GET, POST, PUT, PATCH, or DELETE
+    - **Authentication** — see [Authentication](#authentication) below
+    - **Request headers and parameters** — static or templated values
+    - **Response extraction** — the JSONPath to the records array in the response
+    - **Primary key** — the field(s) that uniquely identify a record
+  </Step>
+
+  <Step title="Configure pagination">
+    Most APIs return records in pages. Open **Pagination** to tell Airbyte how to move through them:
+
+    - **No pagination** — all records come back in a single response
+    - **Cursor-based** — the response includes a token pointing to the next page
+    - **Offset-based** — increment an offset query parameter by the page size
+    - **Page number** — increment a page number query parameter on each request
+  </Step>
+
+  <Step title="Test the stream">
+    Click **Test** in the right panel. Airbyte sends a real request to your API using the test configuration you provide and shows the raw response and the extracted records. You can:
+
+    - Inspect each page of results
+    - Click **Detect schema** to auto-generate a JSON Schema from the returned records
+    - Adjust field paths and pagination settings until records look correct
+  </Step>
+
+  <Step title="Add incremental sync (optional)">
+    For streams that support it, open **Incremental sync** to configure a cursor field. Airbyte will pass the cursor value from the previous sync as a request parameter, fetching only new or updated records.
+  </Step>
+
+  <Step title="Publish the connector">
+    When you're satisfied with all streams, click **Publish to workspace**. The connector appears in your workspace's connector catalog and can be used to create sources and connections like any other connector.
+  </Step>
+</Steps>
+
+## Authentication
+
+The Builder supports the following authentication methods:
+
+<CardGroup cols={2}>
+  <Card title="No auth" icon="lock-open">
+    The API requires no authentication. All requests are sent without credentials.
+  </Card>
+  <Card title="API Key" icon="key">
+    Inject an API key as a request header or query parameter. Reference the key with `{{ config['api_key'] }}`.
+  </Card>
+  <Card title="Bearer token" icon="shield">
+    Sends `Authorization: Bearer <token>` on every request.
+  </Card>
+  <Card title="Basic HTTP" icon="user">
+    Encodes username and password into a Basic auth header.
+  </Card>
+  <Card title="OAuth 2.0" icon="refresh-cw">
+    Full OAuth 2.0 flow with client ID, client secret, refresh token, and token refresh endpoint. Airbyte handles token refresh automatically.
+  </Card>
+  <Card title="JWT" icon="file-key">
+    Generates a signed JSON Web Token using your private key, algorithm (RS256, HS256, etc.), and custom payload claims.
+  </Card>
+  <Card title="Session token" icon="clock">
+    Fetches a short-lived session token from a login endpoint before each sync, then injects it into subsequent requests.
+  </Card>
+</CardGroup>
+
+## YAML editor
+
+Every configuration you make in the Builder UI is backed by a YAML manifest. Click the **YAML editor** toggle (top-right of the Builder) to switch between the form view and the raw YAML. You can edit the YAML directly and switch back to the UI view at any time.
+
+This is the same format used by the [Low-code CDK](/connectors/building/low-code-cdk), so connectors built in the UI can be exported and committed to version control.
+
+## Substreams (parent-child relationships)
+
+Some APIs return child records relative to parent records. For example, to list all comments you must first list all posts and then call `/posts/{post_id}/comments` for each.
+
+In the Builder, open the **Parent stream** section in a stream's config and select the parent stream. The Builder automatically creates a partition router that iterates over parent IDs and substitutes them into the child stream's path via `{{ stream_slice['parent_id'] }}`.
+
+## Version history
+
+Every time you publish a connector, Airbyte creates a new version. You can view version history and roll back to a previous version from the **Versions** modal accessible via the **...** menu on the connector page.
+
+<Tip>
+  Publish a new version when you change a stream's schema. Airbyte will detect the schema change and notify affected connections.
+</Tip>
+
+## Limitations
+
+The Connector Builder supports REST APIs with JSON responses. It does not currently support:
+
+- Non-REST protocols (GraphQL, SOAP, binary formats)
+- Destination connectors
+- Connectors that require custom Python transformation logic
+- APIs that require custom SSL certificates
+
+For these use cases, use the [Low-code CDK](/connectors/building/low-code-cdk) or [Python CDK](/connectors/building/python-cdk).

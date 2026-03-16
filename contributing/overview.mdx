@@ -1,0 +1,91 @@
+---
+title: "Contributing to Airbyte"
+description: "How to contribute to Airbyte — connectors, platform, docs, and more."
+---
+
+Airbyte is an open-source data movement platform, and contributions from the community are what make it better. Whether you want to build a new connector, fix a bug in the platform, improve the documentation, or help other users — there is a place for you.
+
+<CardGroup cols={2}>
+  <Card title="Build or improve a connector" icon="plug">
+    Create a new source or destination connector using the Python CDK or low-code CDK, or improve an existing one in the [connectors directory](https://github.com/airbytehq/airbyte/tree/master/airbyte-integrations/connectors).
+  </Card>
+  <Card title="Platform contributions" icon="server">
+    Contribute to the Airbyte platform itself — the scheduler, worker, server, or web app. The backend is written in Kotlin and Java; the frontend is React and TypeScript.
+  </Card>
+  <Card title="Documentation" icon="book">
+    Fix inaccuracies, improve clarity, add missing content, or write new guides and tutorials on [docs.airbyte.com](https://docs.airbyte.com).
+  </Card>
+  <Card title="Bug reports and feature requests" icon="bug">
+    Open a GitHub issue using the [bug report](https://github.com/airbytehq/airbyte/issues/new?template=bug-report.md) or [feature request](https://github.com/airbytehq/airbyte/issues/new?template=feature-request.md) templates.
+  </Card>
+</CardGroup>
+
+## Before you start
+
+Read the [Code of conduct](/contributing/code-of-conduct) before contributing. All community members are expected to follow it.
+
+For security vulnerabilities, do **not** open a public GitHub issue. Instead, email [security@airbyte.io](mailto:security@airbyte.io). See the [Security policy](/contributing/security) for details.
+
+## How to contribute
+
+<Steps>
+  <Step title="Find something to work on">
+    Browse open issues on [GitHub](https://github.com/airbytehq/airbyte/issues). Issues labelled `good first issue` are good starting points for new contributors. For larger changes, open an issue first to discuss your approach with the maintainers.
+  </Step>
+  <Step title="Fork and clone the repository">
+    Fork the [airbytehq/airbyte](https://github.com/airbytehq/airbyte) repository, then clone your fork locally:
+
+    ```bash
+    git clone https://github.com/<your-username>/airbyte.git
+    cd airbyte
+    ```
+  </Step>
+  <Step title="Create a branch">
+    Create a descriptive branch name for your change:
+
+    ```bash
+    git checkout -b feat/my-new-connector
+    # or
+    git checkout -b fix/connection-status-bug
+    ```
+  </Step>
+  <Step title="Make your changes">
+    Make your changes, write or update tests, and ensure the build passes locally. See the [local development setup](/contributing/local-development) guide for how to run Airbyte on your machine.
+  </Step>
+  <Step title="Open a pull request">
+    Push your branch and open a pull request against the `master` branch of the upstream repository. Fill out the pull request template with a clear description of what you changed and why. A maintainer will review your PR and may request changes.
+  </Step>
+</Steps>
+
+## Connector contributions
+
+Connectors are the most common type of contribution. Airbyte already has [300+ connectors](https://docs.airbyte.com/integrations/) and is always looking for more.
+
+You can build connectors using:
+
+- **Low-code CDK** — Declare your connector in YAML. Best for REST API sources with standard pagination and authentication.
+- **Python CDK** — Full Python for connectors that need custom logic, complex authentication, or non-REST sources.
+
+All connectors are Docker images that implement the [Airbyte protocol](https://docs.airbyte.com/understanding-airbyte/airbyte-protocol/). You can find connectors in the `airbyte-integrations/connectors/` directory of the repository.
+
+## Community programs
+
+<CardGroup cols={2}>
+  <Card title="Maintainer program" icon="shield-check" href="https://airbyte.com/maintainer-program">
+    Advanced Airbyte users can apply to become official maintainers. Maintainers get early access to features, direct communication with the engineering team, and recognition in the community.
+  </Card>
+  <Card title="Writer program" icon="pen" href="https://airbyte.com/write-for-the-community">
+    Contribute tutorials, blog posts, and guides to the Airbyte community. Writers receive compensation for published content.
+  </Card>
+</CardGroup>
+
+## Community resources
+
+| Resource | Purpose |
+|----------|---------|
+| [Slack](https://slack.airbyte.io) | Quick questions and community discussion |
+| [Discourse](https://discuss.airbyte.io) | Deeper conversations about features and connectors |
+| [GitHub Issues](https://github.com/airbytehq/airbyte/issues) | Bug reports and feature requests |
+| [Weekly office hours](https://airbyte.io/weekly-office-hours/) | Live sessions with the Airbyte team |
+| [YouTube](https://www.youtube.com/c/AirbyteHQ) | Video tutorials and demos |
+| [Newsletter](https://airbyte.com/newsletter) | Product updates and data news |

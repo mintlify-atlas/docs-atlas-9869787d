@@ -1,0 +1,190 @@
+---
+title: "Workers and sync orchestration"
+description: "How Temporal workflows and worker commands coordinate sync jobs from scheduling through completion."
+---
+
+Airbyte uses [Temporal](https://temporal.io/) as its workflow engine to schedule, execute, and recover sync jobs. This page explains how Temporal workflows relate to Airbyte worker commands, how a sync job moves through its lifecycle, and how failures are handled.
+
+## Why Temporal?
+
+Sync jobs are long-running (anywhere from seconds to many hours), must survive platform restarts, and need reliable retry semantics. Temporal's event-sourced execution history solves all three problems without Airbyte having to build custom state machines:
+
+- **Durability** — workflow state is persisted after every activity. A worker restart resumes from the last checkpoint.
+- **Retries** — each activity can be configured with a retry policy independent of the workflow.
+- **Versioning** — backward-compatible code changes are expressed as version guards rather than workflow migrations.
+
+## Workflow versioning
+
+Temporal replays workflow history to resume in-flight executions. If the code that handles a replay has changed in a structurally incompatible way (activity added, removed, or reordered), the workflow stalls.
+
+Airbyte's versioning rules (from `airbyte-workers/README.md`):
+
+- There is **one global version per workflow** (a single `VERSION_LABEL` tag).
+- The version number must be bumped whenever you:
+  - Add an activity
+  - Remove an activity
+  - Change the input type of an activity
+  - Add a `Workflow.sleep()` call
+
+**Pattern for a first-time version check:**
+
+```kotlin
+val version = Workflow.getVersion(VERSION_LABEL, MINIMAL_VERSION, CURRENT_VERSION)
+
+if (version >= CURRENT_VERSION) {
+    // new implementation
+}
+```
+
+**Pattern for bumping from version 4 to 5:**
+
+```kotlin
+val version = Workflow.getVersion(VERSION_LABEL, MINIMAL_VERSION, CURRENT_VERSION)
+
+when {
+    version <= 4 && version >= MINIMAL_VERSION -> {
+        // old implementation
+    }
+    version >= CURRENT_VERSION -> {
+        // new implementation
+    }
+}
+```
+
+<Warning>
+  Removing a `MINIMAL_VERSION` guard is a breaking change. Keep both `MINIMAL_VERSION` and `CURRENT_VERSION` constants in the workflow file even if they are no longer used in active code paths.
+</Warning>
+
+## Worker commands
+
+Each connector operation maps to a **command class** in `airbyte-workers/src/main/kotlin/io/airbyte/workers/commands/`. Commands abstract the Workload API and Kubernetes pod lifecycle so that Temporal activities stay thin.
+
+All workload-based commands extend `WorkloadCommandBase`, which provides:
+
+```kotlin
+// airbyte-workers/.../commands/WorkloadCommandBase.kt
+abstract class WorkloadCommandBase<Input>(
+  protected val airbyteApiClient: AirbyteApiClient,
+  protected val workloadClient: WorkloadClient,
+) : ConnectorCommand<Input> {
+
+  abstract fun buildWorkloadCreateRequest(input: Input, signalPayload: String?): WorkloadCreateRequest
+
+  override fun start(input: Input, signalPayload: String?): String {
+    val workloadCreateRequest = buildWorkloadCreateRequest(input, signalPayload)
+    workloadClient.createWorkload(workloadCreateRequest)
+    return workloadCreateRequest.workloadId
+  }
+
+  override fun isTerminal(id: String): Boolean = workloadClient.isTerminal(id)
+
+  override fun cancel(id: String) {
+    workloadClient.cancelWorkloadBestEffort(
+      WorkloadCancelRequest(workloadId = id, reason = WorkloadConstants.WORKLOAD_CANCELLED_BY_USER_REASON, "WorkloadCommand")
+    )
+  }
+}
+```
+
+### CheckCommand
+
+Validates connector credentials before a source or destination is saved, and optionally before each sync. It submits a `WorkloadType.CHECK` workload containing the actor context (actor ID, actor definition ID, workspace ID, organization ID) and returns a `StandardCheckConnectionOutput` with `SUCCEEDED` or `FAILED`.
+
+Labels attached to the workload: `job`, `attempt`, `workspace_id`, `actor_type`, `actor_id`.
+
+### DiscoverCommand
+
+Asks the source connector to enumerate all available streams and their schemas. The resulting catalog is stored in the database by content hash to avoid redundant storage.
+
+**Workload ID generation:**
+- **Manual discover** — `generateDiscoverWorkloadId(actorDefinitionId, jobId, attemptNumber)` — unique per job.
+- **Auto-refresh discover** — `generateDiscoverWorkloadIdV2WithSnap(actorId, currentTimeMs, windowMs)` — snapped to a time window so duplicate auto-refresh requests within the window reuse the same workload record.
+
+If auto-refresh is disabled (window is `INFINITE`), `DiscoverCommand.start()` returns `NOOP_DISCOVER_PLACEHOLDER_ID` immediately without creating a workload.
+
+### ReplicationCommand
+
+Orchestrates a full sync between a source and a destination. Unlike the workload-based commands, `ReplicationCommand` extends `ApiCommandBase` and drives replication through the server-side Command API.
+
+The deterministic command ID format is:
+
+```
+replication_{jobId}_{attemptId}_{connectionId}
+```
+
+On completion, `getOutput()` fetches a `ReplicateCommandOutputResponse` from the server and assembles a `StandardSyncOutput` containing:
+- `bytesSynced`, `recordsSynced`, `startTime`, `endTime`
+- Per-stream statistics (`streamStats`)
+- A list of `FailureReason` objects if any streams failed
+
+The await timeout for polling the command output is **15 minutes** (`getAwaitDuration()`). If the command has not completed within that window, Temporal will retry the activity according to its retry policy.
+
+### SpecCommand
+
+Fetches the connector's JSON Schema specification — the form definition displayed in the UI when configuring a source or destination. Always submitted with `WorkloadPriority.HIGH` because the UI blocks on the response.
+
+The workload ID is `generateSpecWorkloadId(jobId)`. On success, the output contains the `ConnectorSpecification`; on failure, a `FailureReason` with the error details.
+
+## Job lifecycle
+
+A sync job passes through the following states:
+
+```
+pending
+  │  Scheduler enqueues a Temporal workflow
+  ▼
+running
+  │  Temporal dispatches activities to airbyte-workers
+  │  Workers create workloads via the Workload API
+  │  Workload launcher claims and launches connector pods
+  ▼
+  ├── succeeded   ← all streams synced without error
+  ├── failed      ← one or more streams encountered an unrecoverable error
+  └── cancelled   ← user or platform cancelled the job
+```
+
+Each job can have multiple **attempts** (Temporal retries). The attempt number is recorded in workload labels and log paths:
+
+```
+TemporalUtils.getJobRoot(workspaceRoot, jobId, attemptNumber)
+```
+
+## Workload API and launcher interaction
+
+The Workload API is a queue abstraction implemented inside `airbyte-server`. The lifecycle of a workload is:
+
+1. **Created** — worker command calls `workloadClient.createWorkload(request)` with a serialized input payload, labels, workspace/organization IDs, priority, and dataplane group.
+2. **Claimed** — the workload launcher atomically claims the workload (`ClaimStage`). This ensures exactly-one-launcher semantics.
+3. **Running** — the launcher creates the Kubernetes Pod (`LaunchPodStage`). The connector pod sends periodic heartbeats.
+4. **Succeeded / Failed** — the connector pod exits. The launcher (or `airbyte-cron`'s heartbeat monitor) marks the workload terminal.
+5. **Polled** — the worker command polls `workloadClient.isTerminal(id)` in a loop. When the workload is terminal, the command calls `getOutput(id)` to retrieve results.
+
+## Priority queues
+
+Workloads have two priority levels:
+
+| Priority | Used by | Parallelism config |
+|----------|---------|--------------------|
+| `HIGH` | `SpecCommand`, ad-hoc checks | `workloadLauncherConfiguration.parallelism.highPriorityQueue` |
+| `DEFAULT` | Scheduled syncs, auto-refresh discovers | `workloadLauncherConfiguration.parallelism.defaultQueue` |
+
+The launcher runs separate pollers and thread pools for each priority level so that a burst of high-priority spec requests cannot starve scheduled syncs, and vice versa.
+
+## Error handling and retries
+
+Failure information flows through `FailureReason` objects that carry:
+- `failureType` — category (for example, `SYSTEM_ERROR`, `CONFIG_ERROR`, `MANUAL_CANCELLATION`)
+- `failureOrigin` — which component failed (source, destination, replication worker, and so on)
+- `externalMessage` — user-visible error message
+- `internalMessage` — internal diagnostic detail
+- `stacktrace` — full stack trace for debugging
+- `retryable` — whether the platform should automatically retry this failure type
+
+Temporal retries activities with configurable back-off. Airbyte also has its own successive/total failure limits for connections, controllable per-deployment via feature flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `complete-failures.max-successive` | `-1` (disabled) | Max consecutive complete failures before pausing connection |
+| `complete-failures.max-total` | `-1` (disabled) | Max total complete failures before pausing connection |
+| `complete-failures.backoff.min-interval-s` | `-1` (disabled) | Minimum back-off interval between retries |
+| `complete-failures.backoff.max-interval-s` | `-1` (disabled) | Maximum back-off interval between retries |

@@ -1,0 +1,270 @@
+---
+title: "Security"
+description: "Authentication, RBAC, TLS, secrets management, and network security for Airbyte deployments."
+keywords: ["security", "authentication", "keycloak", "SSO", "RBAC", "TLS", "secrets", "encryption"]
+---
+
+Airbyte uses Keycloak as its identity provider, enforces role-based access control through bearer tokens, and integrates with external secrets managers to keep credentials out of the database.
+
+## Authentication
+
+### Default auth (community edition)
+
+In community edition, auth is enabled by default (`global.auth.enabled: true`). The bootloader provisions an initial admin user whose credentials come from the Kubernetes Secret referenced by `global.auth.instanceAdmin`:
+
+```yaml
+global:
+  auth:
+    enabled: true
+
+    instanceAdmin:
+      firstName: "Admin"
+      lastName: "User"
+      emailSecretKey: "instance-admin-email"      # key in the secret
+      passwordSecretKey: "instance-admin-password" # key in the secret
+    secretName: "airbyte-config-secrets"
+```
+
+Create the secret before installing the chart:
+
+```bash
+kubectl create secret generic airbyte-config-secrets \
+  --namespace airbyte \
+  --from-literal=instance-admin-email=admin@example.com \
+  --from-literal=instance-admin-password=<strong-password>
+```
+
+<Warning>Do not use the default `password` value in any environment accessible from a network. Set a strong password in your secret before deploying.</Warning>
+
+### Keycloak setup
+
+Airbyte includes a bundled Keycloak instance (`airbyte-keycloak`) and a setup Job (`airbyte-keycloak-setup`) that configures the Airbyte realm, clients, and initial admin user automatically on first install.
+
+The setup Job reads credentials from the same secret as the instance admin and configures:
+- The `Airbyte` realm
+- An `airbyte-webapp` OIDC client
+- An `airbyte-server` confidential client
+- The initial instance admin user
+
+Keycloak runs on port `8180` internally and is not exposed outside the cluster by default.
+
+### SSO with an external identity provider (Enterprise)
+
+Enterprise edition supports SSO via OIDC. Configure your identity provider in `values.yaml`:
+
+<Tabs>
+  <Tab title="OIDC (Auth0, Okta)">
+    ```yaml
+    global:
+      auth:
+        identityProvider:
+          type: oidc
+          secretName: "idp-secrets"
+
+          oidc:
+            domain: "your-tenant.us.auth0.com"
+            appName: "Airbyte"
+            displayName: "Your Company SSO"
+            clientIdSecretKey: "oidc-client-id"
+            clientSecretSecretKey: "oidc-client-secret"
+    ```
+
+    Create the secret:
+
+    ```bash
+    kubectl create secret generic idp-secrets \
+      --namespace airbyte \
+      --from-literal=oidc-client-id=<client-id> \
+      --from-literal=oidc-client-secret=<client-secret>
+    ```
+  </Tab>
+  <Tab title="Generic OIDC">
+    ```yaml
+    global:
+      auth:
+        identityProvider:
+          type: generic-oidc
+          secretName: "idp-secrets"
+
+          genericOidc:
+            clientId: "<client-id>"
+            audience: "<audience>"
+            issuer: "https://accounts.google.com"
+            endpoints:
+              authorizationServerEndpoint: "https://accounts.google.com/o/oauth2/v2/auth"
+              jwksEndpoint: "https://www.googleapis.com/oauth2/v3/certs"
+            fields:
+              subject: sub
+              email: email
+              name: name
+    ```
+  </Tab>
+</Tabs>
+
+## Role-based access control (RBAC)
+
+Airbyte enforces RBAC at the organization and workspace level. The roles available are:
+
+| Role | Scope | Permissions |
+|---|---|---|
+| **Instance Admin** | Instance | Full access to all organizations and workspaces. |
+| **Organization Admin** | Organization | Manage workspaces, members, and billing within the organization. |
+| **Organization Member** | Organization | Read organization metadata, join workspaces. |
+| **Workspace Admin** | Workspace | Manage connections, sources, destinations, and workspace members. |
+| **Workspace Editor** | Workspace | Create and edit connections, sources, and destinations. |
+| **Workspace Reader** | Workspace | Read-only access to all workspace resources. |
+
+RBAC is enforced by the server via bearer tokens issued by Keycloak. The `API_AUTHORIZATION_ENABLED` environment variable controls whether the server checks authorization headers. It defaults to `true` and should not be disabled in production.
+
+## API authentication tokens
+
+Server-to-server API access uses bearer tokens obtained from Keycloak. The internal OAuth client credentials are stored in a Kubernetes Secret:
+
+```yaml
+global:
+  auth:
+    instanceAdmin:
+      clientIdSecretKey: "instance-admin-client-id"
+      clientSecretSecretKey: "instance-admin-client-secret"
+```
+
+To make authenticated API calls, obtain a token from Keycloak and pass it in the `Authorization` header:
+
+```bash
+TOKEN=$(curl -s -X POST \
+  https://airbyte.example.com/auth/realms/airbyte/protocol/openid-connect/token \
+  -d "grant_type=client_credentials" \
+  -d "client_id=airbyte-server" \
+  -d "client_secret=<secret>" | jq -r .access_token)
+
+curl -H "Authorization: Bearer $TOKEN" \
+  https://airbyte.example.com/api/public/v1/connections
+```
+
+## TLS / HTTPS configuration
+
+Airbyte does not terminate TLS itself; TLS termination happens at the ingress layer.
+
+### cert-manager with Let's Encrypt
+
+```yaml
+# Certificate resource
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: airbyte-tls
+  namespace: airbyte
+spec:
+  secretName: airbyte-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - airbyte.example.com
+```
+
+Reference the secret in your `values.yaml`:
+
+```yaml
+ingress:
+  enabled: true
+  tls:
+    - secretName: airbyte-tls
+      hosts:
+        - airbyte.example.com
+```
+
+Set `global.auth.security.cookieSecureSetting: true` (the default) so that session cookies are only sent over HTTPS.
+
+### Cookie security settings
+
+```yaml
+global:
+  auth:
+    security:
+      cookieSecureSetting: true      # Secure flag on session cookies
+      cookieSameSiteSetting: Strict  # SameSite=Strict
+      jwtSignatureSecretKey: "jwt-signature-secret-key"  # key in the secret
+```
+
+## Secrets management
+
+By default, connector credentials are encrypted and stored in the Airbyte database. For stronger isolation, delegate secrets storage to an external manager:
+
+```yaml
+global:
+  secretsManager:
+    enabled: true
+    type: AWS_SECRET_MANAGER
+    secretName: "aws-secrets-manager-creds"
+
+    awsSecretManager:
+      region: us-east-1
+      authenticationType: credentials  # or instanceProfile
+      kms: "arn:aws:kms:us-east-1:123456789:key/..."  # optional KMS ARN
+      tags:
+        - key: team
+          value: platform
+```
+
+Supported backends:
+
+| Backend | `type` value | Notes |
+|---|---|---|
+| AWS Secrets Manager | `AWS_SECRET_MANAGER` | Supports credential or instance-profile auth. |
+| Google Secret Manager | `GOOGLE_SECRET_MANAGER` | Requires a service account JSON key. |
+| Azure Key Vault | `AZURE_KEY_VAULT` | Requires tenant ID, vault URL, and client credentials. |
+| HashiCorp Vault | `VAULT` | Requires address, prefix, and auth token. |
+
+<Info>When you enable an external secrets manager, new connector credentials are written there. Existing credentials stored in the database are **not** automatically migrated. You must re-enter credentials for existing connectors after enabling secrets management.</Info>
+
+## Network security
+
+### Restrict ingress
+
+Do not expose the internal services (PostgreSQL port `5432`, MinIO port `9000`, Temporal port `7233`, Keycloak port `8180`, management port `8085`) outside the cluster. These are cluster-internal services and should never be reachable from the public internet.
+
+Only the ingress (typically port 443) and optionally the server port (`8000`) should be externally accessible.
+
+### Kubernetes NetworkPolicy
+
+Add a `NetworkPolicy` to restrict pod-to-pod communication:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: airbyte-server-ingress
+  namespace: airbyte
+spec:
+  podSelector:
+    matchLabels:
+      app: airbyte-server
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: airbyte-webapp
+        - podSelector:
+            matchLabels:
+              app: airbyte-worker
+      ports:
+        - port: 8000
+        - port: 8085
+```
+
+## Data encryption
+
+### In transit
+
+All traffic between the browser and Airbyte is encrypted via TLS at the ingress. Internal service-to-service traffic travels over the cluster network. For strict environments, enable mutual TLS (mTLS) between services using a service mesh such as Istio or Linkerd.
+
+### At rest
+
+Data at rest encryption depends on your infrastructure:
+
+- **Database**: Enable PostgreSQL transparent data encryption or use an RDS instance with encryption at rest enabled.
+- **Object storage**: Enable server-side encryption on your S3 bucket (`SSE-S3` or `SSE-KMS`), GCS bucket (Google-managed or CMEK), or Azure Blob Storage container (Storage Service Encryption with customer-managed keys).
+- **Secrets**: Use the KMS integration in AWS Secrets Manager or Google Secret Manager CMEK to encrypt secrets with your own keys.
+
+<Tip>For AWS deployments, combine S3 bucket encryption with a KMS customer-managed key and enable S3 Object Lock for compliance requirements.</Tip>

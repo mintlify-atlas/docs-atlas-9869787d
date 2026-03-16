@@ -1,0 +1,115 @@
+---
+title: "Sources"
+description: "Add and manage source connectors in Airbyte to read data from external systems."
+keywords: ["source", "connector", "sync mode", "credentials", "streams"]
+---
+
+A source connector reads data from an external system and emits it as a stream of records. Sources can be databases, REST APIs, file storage systems, SaaS applications, or any system that exposes data Airbyte can read.
+
+## Add a source
+
+<Steps>
+  <Step title="Open the Sources page">
+    In the left sidebar, click **Sources**. You see a list of all sources already configured in your workspace.
+  </Step>
+
+  <Step title="Create a new source">
+    Click **New source** in the top-right corner. The connector catalog opens.
+  </Step>
+
+  <Step title="Select a connector">
+    Search for the connector you want — for example, **PostgreSQL**, **Google Sheets**, or **Stripe** — and click it.
+  </Step>
+
+  <Step title="Configure the source">
+    Fill in the required fields:
+
+    - **Source name** — a label for this source within your workspace
+    - **Credentials** — API keys, passwords, OAuth tokens, or other authentication details specific to the connector
+    - **Optional settings** — start date, stream filters, and other connector-specific options
+
+    Credentials marked with a lock icon are stored encrypted and never exposed in the UI after saving.
+  </Step>
+
+  <Step title="Test the connection">
+    Click **Test connection**. Airbyte runs the connector's `check` operation against the external system. A green checkmark confirms the credentials are valid and the source is reachable.
+  </Step>
+
+  <Step title="Save the source">
+    Click **Save source**. The source is now available to use in connections.
+  </Step>
+</Steps>
+
+## Sync modes
+
+Each stream within a source can be synced in one of the following modes. The available modes depend on what the source connector supports.
+
+| Sync mode | Description |
+|---|---|
+| **Full Refresh - Overwrite** | Reads all records from the source on every sync and replaces the destination data entirely. |
+| **Full Refresh - Append** | Reads all records from the source on every sync and appends them to the destination, creating a historical log. |
+| **Incremental - Append** | Reads only new or changed records since the last sync using a cursor field (such as `updated_at`). Appends new records to the destination. |
+| **Incremental - Append + Deduped** | Reads only new or changed records and appends them, then deduplicates the destination table by primary key so each record appears only once in its latest state. |
+
+<Tip>
+  Use **Incremental - Append + Deduped** for most production workloads. It minimizes API calls and data transfer while keeping your destination tables accurate.
+</Tip>
+
+## Common configuration fields
+
+While each connector defines its own schema, most source connectors share several common fields:
+
+- **Host / Base URL** — the endpoint or hostname of the external system
+- **Port** — for database connectors
+- **Username and password** — or OAuth credentials
+- **Start date** — the earliest date from which to sync records (used for incremental syncs)
+- **Stream selection** — which tables, endpoints, or topics to include
+
+## Manage sources via the API
+
+You can create, update, and delete sources programmatically using the Airbyte API at `https://api.airbyte.com/v1`.
+
+**List sources in a workspace:**
+
+```bash
+curl -X GET "https://api.airbyte.com/v1/sources?workspaceIds=<workspace-id>" \
+  -H "Authorization: Bearer <token>"
+```
+
+**Create a source:**
+
+```bash
+curl -X POST "https://api.airbyte.com/v1/sources" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My Postgres source",
+    "workspaceId": "<workspace-id>",
+    "configuration": {
+      "airbyte_source_name": "postgres",
+      "host": "db.example.com",
+      "port": 5432,
+      "database": "analytics",
+      "username": "airbyte",
+      "password": "<password>"
+    }
+  }'
+```
+
+**Get a source by ID:**
+
+```bash
+curl -X GET "https://api.airbyte.com/v1/sources/<source-id>" \
+  -H "Authorization: Bearer <token>"
+```
+
+**Delete a source:**
+
+```bash
+curl -X DELETE "https://api.airbyte.com/v1/sources/<source-id>" \
+  -H "Authorization: Bearer <token>"
+```
+
+<Note>
+  Deleting a source does not delete any connections or destination data. You must delete dependent connections separately before removing the source.
+</Note>

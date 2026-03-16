@@ -1,0 +1,176 @@
+---
+title: "Platform components"
+description: "A deep dive into every Airbyte service: what it does, how it is built, and how it fits into the platform."
+---
+
+This page describes each service in the Airbyte platform in detail. For a high-level map see [Architecture overview](/architecture/overview).
+
+## airbyte-server
+
+The server is the central API gateway for the Airbyte platform. It is written in **Kotlin** and runs on the **Micronaut** framework.
+
+**Responsibilities:**
+- Implements the Airbyte Configuration API (every REST endpoint for workspaces, sources, destinations, connections, jobs, and streams)
+- Hosts the Workload API that the workload launcher polls for pending connector jobs
+- Delegates each API endpoint to a tightly-scoped resource handler (for example, `workspace/get` dispatches to `WorkspaceHandler`)
+- Manages secrets, notifications, and organization membership
+
+**Entry point:** `ServerApp.java`
+
+The external API contract is declared in the `airbyte-api` module. The `ConfigurationApi` class implements every endpoint but keeps itself thin by delegating to handler classes. Unit tests are written at the handler level, not against `ConfigurationApi` directly.
+
+```
+airbyte-server/
+  src/main/java/io/airbyte/server/
+    ServerApp.java          ← main entry point
+    apis/ConfigurationApi   ← implements every REST endpoint
+    handlers/               ← one handler class per resource type
+```
+
+## airbyte-webapp
+
+The web UI is a **React** and **TypeScript** single-page application served at port **8000**. It communicates with `airbyte-server` over the internal REST API.
+
+**Responsibilities:**
+- Source, destination, and connection CRUD wizards
+- Connection status dashboard and sync history
+- Stream-level catalog configuration (column selection, sync mode per stream)
+- Organization and workspace management
+- Settings for notifications, secrets, and feature enrollments
+
+The webapp has no direct access to the database or Temporal. All state is read and written through the server API.
+
+## airbyte-workers
+
+The workers module hosts **Temporal activity workers** — long-running processes that receive activity tasks from Temporal and execute them.
+
+**Responsibilities:**
+- Register Temporal workflow and activity implementations
+- Execute connector commands by submitting workloads to the Workload API and polling until they complete
+- Handle retries and timeouts within Temporal's versioned workflow history
+
+**Temporal versioning:**  
+Temporal maintains a strict execution history for each workflow. Adding, removing, or reordering activities requires bumping the workflow version. Airbyte uses a single global version per workflow and a `Workflow.getVersion()` call to gate old vs. new code paths. Removing a version is considered a breaking change.
+
+### Worker commands
+
+Each connector operation is encapsulated in a command class that extends `WorkloadCommandBase` or `ApiCommandBase`:
+
+<AccordionGroup>
+  <Accordion title="CheckCommand">
+    **File:** `airbyte-workers/src/main/kotlin/io/airbyte/workers/commands/CheckCommand.kt`
+
+    Verifies that a source or destination connector can connect using the supplied credentials. Called before saving a new source or destination and optionally before each sync (controlled by the `platform.always-run-check-before-sync` flag).
+
+    Submits a workload of type `WorkloadType.CHECK`. The workload payload includes the actor context, workspace ID, and organization ID. On completion it returns a `StandardCheckConnectionOutput` with a `SUCCEEDED` or `FAILED` status and a human-readable message.
+  </Accordion>
+
+  <Accordion title="DiscoverCommand">
+    **File:** `airbyte-workers/src/main/kotlin/io/airbyte/workers/commands/DiscoverCommand.kt`
+
+    Asks the source connector to enumerate all available streams and their schemas. The result is a **catalog** stored in the database.
+
+    Supports two modes:
+    - **Manual** — triggered explicitly by the user or API. Uses a workload ID derived from the actor definition ID, job ID, and attempt number.
+    - **Auto-refresh** — triggered on a schedule. Uses a time-snapped workload ID (`generateDiscoverWorkloadIdV2WithSnap`) so that duplicate auto-refresh jobs within the configured window are deduplicated. If auto-refresh is disabled (`discoverAutoRefreshWindow == Duration.INFINITE`), the command returns a no-op placeholder ID immediately.
+  </Accordion>
+
+  <Accordion title="ReplicationCommand">
+    **File:** `airbyte-workers/src/main/kotlin/io/airbyte/workers/commands/ReplicationCommand.kt`
+
+    Orchestrates a full sync run between a source and a destination. Unlike the workload-based commands, `ReplicationCommand` extends `ApiCommandBase` and drives replication through the server-side Command API (`runReplicateCommand` / `getReplicateCommandOutput`).
+
+    The command ID is deterministic: `replication_{jobId}_{attemptId}_{connectionId}`. On completion it collects a `ReplicationAttemptSummary` (records synced, bytes synced, start/end time, stream-level stats) and a list of `FailureReason` objects, assembling them into a `StandardSyncOutput`.
+  </Accordion>
+
+  <Accordion title="SpecCommand">
+    **File:** `airbyte-workers/src/main/kotlin/io/airbyte/workers/commands/SpecCommand.kt`
+
+    Fetches the connector specification — the JSON Schema that describes the configuration fields a user must supply when setting up a source or destination. Always runs at `WorkloadPriority.HIGH` because the UI blocks on spec results when displaying the connector setup form.
+
+    Returns a `ConnectorJobOutput` containing the connector spec or a `FailureReason` if the connector image fails to start.
+  </Accordion>
+</AccordionGroup>
+
+## airbyte-bootloader
+
+The bootloader is a **short-lived initialization service** that runs to completion before the main platform services start.
+
+**Responsibilities:**
+- Applies all pending Flyway database migrations to bring the PostgreSQL schema to the current version
+- Seeds baseline data required by the platform (for example, default workspace, actor definitions)
+- Exits with a non-zero code if migration fails, preventing the rest of the stack from starting with a corrupt schema
+
+**Entry point:** `Application.java`
+
+In Docker Compose, the bootloader runs as a service with `depends_on` constraints so that `airbyte-server` and `airbyte-workers` do not start until the bootloader exits successfully.
+
+<Note>
+  If you see the server or workers failing to start in a fresh deployment, check the bootloader logs first:
+  ```bash
+  docker compose logs airbyte-bootloader
+  ```
+</Note>
+
+## airbyte-workload-launcher
+
+The workload launcher runs in the **data plane** and is responsible for translating Workload API records into running connector processes.
+
+**Responsibilities:**
+- Poll the Workload API for pending workloads (separate pollers for high-priority and default-priority queues)
+- Launch connector workloads as Kubernetes Pods using the Kubernetes API
+- Execute a multi-stage launch pipeline for each workload
+- Monitor running pods and report heartbeats back to the Workload API
+- Sweep orphaned or runaway pods
+
+**Launch pipeline stages** (`LaunchPipeline`):
+
+| Stage | Class | Purpose |
+|-------|-------|---------|
+| `build` | `BuildInputStage` | Deserialize and validate workload input |
+| `claim` | `ClaimStage` | Atomically claim the workload so no other launcher processes it |
+| `loadShed` | `LoadShedStage` | Reject workload if the launcher is overloaded |
+| `check` | `CheckStatusStage` | Skip if workload was already launched (idempotency) |
+| `mutex` | `EnforceMutexStage` | Enforce one-active-workload-per-connection constraint |
+| `architecture` | `ArchitectureDeciderStage` | Decide which connector execution model to use |
+| `launch` | `LaunchPodStage` | Create the Kubernetes Pod |
+
+The pipeline is built with **Project Reactor** (`Mono`/`Flux`) for non-blocking, backpressure-aware processing. High-priority and default-priority workloads run on separate bounded elastic thread pools with independently configured parallelism.
+
+## airbyte-cron
+
+A scheduled background task runner. It is a lightweight Micronaut application that runs periodic jobs that keep the platform healthy.
+
+**Scheduled tasks include:**
+- **Workload heartbeat monitor** — detects workloads that have stopped sending heartbeats and marks them as failed
+- **Declarative sources updater** — checks for new versions of declarative (low-code) connector definitions and updates the catalog
+- **Database prune** — removes old job records and logs to keep the database size bounded (controlled by the `platform.disable-db-prune` flag)
+
+## Temporal
+
+Temporal is the **workflow orchestration engine** that Airbyte uses to schedule and execute sync jobs reliably.
+
+**Why Temporal?** Sync jobs are long-running (minutes to hours), need retry logic, and must survive process restarts. Temporal's event-sourced workflow history provides exactly these guarantees without Airbyte having to implement custom state machines.
+
+Airbyte uses Temporal for:
+- Scheduling sync workflows on a cron or interval basis
+- Executing connector operation activities (check, discover, replicate, spec) with configurable retry policies
+- Providing an audit trail of every workflow execution
+
+See [Workers and sync orchestration](/architecture/workers-and-sync) for details on how Temporal workflows are versioned and how Airbyte manages backward compatibility.
+
+## PostgreSQL
+
+Airbyte uses a single **PostgreSQL** database for all persistent state. The schema is managed by Flyway and applied by the bootloader on startup.
+
+**What is stored in PostgreSQL:**
+- Workspace, source, destination, and connection configuration
+- Connector (actor) definitions and versions
+- Job and attempt records with status and statistics
+- Stream state (cursor positions for incremental syncs)
+- Workload records (status, labels, heartbeat timestamps)
+- Secrets (optionally — can be offloaded to an external secrets manager)
+
+<Warning>
+  Airbyte does not currently support horizontal PostgreSQL scaling (read replicas for writes). In high-throughput deployments, size your PostgreSQL instance accordingly and enable connection pooling via PgBouncer.
+</Warning>

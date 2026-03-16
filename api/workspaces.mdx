@@ -1,0 +1,228 @@
+---
+title: "Workspaces API"
+description: "Create and manage workspaces that contain your sources, destinations, and connections."
+---
+
+A workspace is the primary organizational unit in Airbyte. All sources, destinations, and connections belong to a workspace. Workspaces belong to an organization.
+
+## Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/workspaces` | List workspaces |
+| `POST` | `/v1/workspaces` | Create a workspace |
+| `GET` | `/v1/workspaces/{workspaceId}` | Get workspace details |
+| `PATCH` | `/v1/workspaces/{workspaceId}` | Update a workspace |
+| `DELETE` | `/v1/workspaces/{workspaceId}` | Delete a workspace |
+| `PUT` | `/v1/workspaces/{workspaceId}/oauthCredentials` | Set workspace-level OAuth credentials |
+
+---
+
+## List workspaces
+
+<CodeGroup>
+```bash curl
+curl https://api.airbyte.com/v1/workspaces \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+`GET /v1/workspaces`
+
+### Query parameters
+
+<ParamField query="workspaceIds" type="array of UUID">
+  Filter by specific workspace UUIDs. If omitted, all accessible workspaces are returned.
+</ParamField>
+
+<ParamField query="includeDeleted" type="boolean">
+  Include soft-deleted workspaces. Defaults to `false`.
+</ParamField>
+
+<ParamField query="limit" type="integer">
+  Maximum number of workspaces to return. Minimum `1`, maximum `100`, default `20`.
+</ParamField>
+
+<ParamField query="offset" type="integer">
+  Number of workspaces to skip. Default `0`.
+</ParamField>
+
+### Response
+
+<ResponseField name="data" type="array" required>
+  Array of workspace objects.
+  <Expandable title="Workspace object">
+    <ResponseField name="workspaceId" type="string (UUID)" required>Unique identifier for the workspace.</ResponseField>
+    <ResponseField name="name" type="string" required>Display name of the workspace.</ResponseField>
+    <ResponseField name="dataResidency" type="string" required>Region where workspace data is stored, e.g. `auto`, `us`, `eu`.</ResponseField>
+    <ResponseField name="notifications" type="object" required>Notification configuration for the workspace.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Create a workspace
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.airbyte.com/v1/workspaces \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Data Engineering",
+    "organizationId": "4a4b6d21-9c3e-4c5b-a1d2-8f0e5d9c2b4a"
+  }'
+```
+</CodeGroup>
+
+`POST /v1/workspaces`
+
+### Request body
+
+<ParamField body="name" type="string" required>
+  Display name for the workspace.
+</ParamField>
+
+<ParamField body="organizationId" type="string (UUID)">
+  ID of the organization to add this workspace to.
+</ParamField>
+
+<ParamField body="notifications" type="object">
+  Notification settings for sync events.
+  <Expandable title="Notifications config">
+    <ParamField body="failure" type="object">Notifications when a sync fails.</ParamField>
+    <ParamField body="success" type="object">Notifications when a sync succeeds.</ParamField>
+    <ParamField body="connectionUpdate" type="object">Notifications when a connection is updated.</ParamField>
+    <ParamField body="connectionUpdateActionRequired" type="object">Notifications when a connection requires action.</ParamField>
+    <ParamField body="syncDisabled" type="object">Notifications when a sync is disabled.</ParamField>
+    <ParamField body="syncDisabledWarning" type="object">Warning notifications before a sync is disabled.</ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="regionId" type="string (UUID)">
+  ID of the region to assign to this workspace.
+</ParamField>
+
+### Response
+
+Returns the created [workspace object](#response) with HTTP `200`.
+
+---
+
+## Get a workspace
+
+<CodeGroup>
+```bash curl
+curl https://api.airbyte.com/v1/workspaces/18dccc91-0ab1-4f72-9ed7-0b8fc27c5826 \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+`GET /v1/workspaces/{workspaceId}`
+
+### Path parameters
+
+<ParamField path="workspaceId" type="string (UUID)" required>
+  ID of the workspace to retrieve.
+</ParamField>
+
+### Response
+
+Returns a single [workspace object](#response).
+
+```json
+{
+  "workspaceId": "18dccc91-0ab1-4f72-9ed7-0b8fc27c5826",
+  "name": "Acme Company",
+  "dataResidency": "auto",
+  "notifications": {}
+}
+```
+
+---
+
+## Update a workspace
+
+<CodeGroup>
+```bash curl
+curl -X PATCH https://api.airbyte.com/v1/workspaces/18dccc91-0ab1-4f72-9ed7-0b8fc27c5826 \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Acme Company — Production"
+  }'
+```
+</CodeGroup>
+
+`PATCH /v1/workspaces/{workspaceId}`
+
+### Path parameters
+
+<ParamField path="workspaceId" type="string (UUID)" required>
+  ID of the workspace to update.
+</ParamField>
+
+### Request body
+
+<ParamField body="name" type="string">New display name.</ParamField>
+<ParamField body="notifications" type="object">Updated notification configuration.</ParamField>
+<ParamField body="regionId" type="string (UUID)">Updated region assignment.</ParamField>
+
+### Response
+
+Returns the updated [workspace object](#response).
+
+---
+
+## Delete a workspace
+
+<CodeGroup>
+```bash curl
+curl -X DELETE https://api.airbyte.com/v1/workspaces/18dccc91-0ab1-4f72-9ed7-0b8fc27c5826 \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+`DELETE /v1/workspaces/{workspaceId}`
+
+<Warning>
+Deleting a workspace also removes all sources, destinations, and connections within it.
+</Warning>
+
+### Path parameters
+
+<ParamField path="workspaceId" type="string (UUID)" required>
+  ID of the workspace to delete.
+</ParamField>
+
+### Response
+
+Returns HTTP `204 No Content` on success.
+
+---
+
+## Set workspace OAuth credentials
+
+`PUT /v1/workspaces/{workspaceId}/oauthCredentials`
+
+Creates or updates OAuth credentials at the workspace level, overriding the default Airbyte-provided credentials for a specific connector type. Refer to the connector's specification for the required credential fields.
+
+### Path parameters
+
+<ParamField path="workspaceId" type="string (UUID)" required>
+  ID of the workspace.
+</ParamField>
+
+### Request body
+
+<ParamField body="actorType" type="string" required>
+  Whether you are setting OAuth credentials for a `source` or `destination`.
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  The connector name these credentials apply to, e.g. `google-ads`.
+</ParamField>
+
+<ParamField body="configuration" type="object" required>
+  The OAuth credential fields required by the connector.
+</ParamField>

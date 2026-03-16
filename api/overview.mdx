@@ -1,0 +1,112 @@
+---
+title: "API overview"
+description: "Programmatically control Airbyte Cloud, OSS & Enterprise using the Airbyte REST API."
+---
+
+The Airbyte API lets you create and manage sources, destinations, connections, and jobs through a standard HTTP interface. You can use it to automate your data pipeline management, integrate Airbyte into your own tooling, or build workflows that react to sync events.
+
+## Base URL
+
+All API endpoints are relative to the following base URL:
+
+```
+https://api.airbyte.com/v1
+```
+
+## Authentication
+
+Every request must include a Bearer token in the `Authorization` header. See [Authentication](/api/authentication) for how to obtain and use tokens.
+
+```bash
+curl https://api.airbyte.com/v1/connections \
+  -H "Authorization: Bearer <your-token>"
+```
+
+## Available API categories
+
+| Category | Description |
+|---|---|
+| [Connections](/api/connections) | Link a source to a destination and configure sync behavior |
+| [Sources](/api/sources) | Create and manage data sources |
+| [Destinations](/api/destinations) | Create and manage data destinations |
+| [Jobs](/api/jobs) | Trigger and monitor sync and reset jobs |
+| [Workspaces](/api/workspaces) | Manage workspaces that contain your connectors |
+| [Organizations](/api/organizations) | Manage the organization that owns workspaces |
+| [Users](/api/users) | List users within an organization |
+| [Permissions](/api/permissions) | Grant and revoke access to workspaces and organizations |
+| [Streams](/api/streams) | Inspect stream properties for a source/destination pair |
+| [Health](/api/health) | Check API availability |
+
+## Pagination
+
+List endpoints use offset-based pagination. You can control the page size and starting position with the `limit` and `offset` query parameters.
+
+| Parameter | Type | Default | Max | Description |
+|---|---|---|---|---|
+| `limit` | integer | 20 | 100 | Number of results per page |
+| `offset` | integer | 0 | — | Number of results to skip |
+
+List responses include `next` and `previous` fields that contain fully-formed URLs you can use to fetch adjacent pages.
+
+```json
+{
+  "next": "https://api.airbyte.com/v1/connections?limit=20&offset=20",
+  "previous": "https://api.airbyte.com/v1/connections?limit=20&offset=0",
+  "data": [...]
+}
+```
+
+When `next` is absent, you have reached the last page.
+
+## Error responses
+
+The API returns standard HTTP status codes. Error responses have a JSON body with details about what went wrong.
+
+| Status | Meaning |
+|---|---|
+| `400` | Bad request — the request body or parameters are invalid |
+| `403` | Forbidden — the API token does not have permission for this action |
+| `404` | Not found — the requested resource does not exist |
+| `422` | Unprocessable entity — a data constraint was violated |
+
+```json
+{
+  "status": 403,
+  "title": "Forbidden",
+  "detail": "You do not have permission to perform this action."
+}
+```
+
+## Example request
+
+The following example lists all connections accessible to the authenticated user:
+
+```bash
+curl -X GET https://api.airbyte.com/v1/connections \
+  -H "Authorization: Bearer <your-token>" \
+  -H "Content-Type: application/json"
+```
+
+Example response:
+
+```json
+{
+  "next": "https://api.airbyte.com/v1/connections?limit=20&offset=20",
+  "previous": null,
+  "data": [
+    {
+      "connectionId": "9924bcd0-99be-453d-ba47-c2c9766f7da5",
+      "name": "Postgres to Snowflake",
+      "sourceId": "95e66a59-8045-4307-9678-63bc3c9b8c93",
+      "destinationId": "e478de0d-a3a0-475c-b019-25f7dd29e281",
+      "workspaceId": "18dccc91-0ab1-4f72-9ed7-0b8fc27c5826",
+      "status": "active",
+      "schedule": {
+        "scheduleType": "cron",
+        "cronExpression": "0 0 * * *"
+      },
+      "createdAt": 1711327850
+    }
+  ]
+}
+```

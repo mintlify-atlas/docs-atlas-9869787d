@@ -1,0 +1,197 @@
+---
+title: "Connections"
+description: "Create and manage connections that link a source to a destination and control how data syncs."
+keywords: ["connection", "sync", "schedule", "streams", "schema change", "reset"]
+---
+
+A connection links a source to a destination and defines how data moves between them: which streams to sync, what sync mode to use per stream, and on what schedule. Each sync run is tracked as a job with a detailed history of records synced and any errors encountered.
+
+## Create a connection
+
+<Steps>
+  <Step title="Open the Connections page">
+    In the left sidebar, click **Connections**, then click **New connection**.
+  </Step>
+
+  <Step title="Select a source">
+    Choose an existing source from the list or create a new one. Airbyte runs `discover` to fetch the source catalog — the list of available streams.
+  </Step>
+
+  <Step title="Select a destination">
+    Choose an existing destination or create a new one.
+  </Step>
+
+  <Step title="Configure streams">
+    The stream selection table shows every stream the source exposes. For each stream you want to sync:
+
+    - Toggle the stream **on** to include it
+    - Select a **sync mode** (the available options depend on the source and destination)
+    - For incremental streams, choose the **cursor field** used to track progress
+    - For deduplication, choose the **primary key** field(s)
+  </Step>
+
+  <Step title="Set the sync schedule">
+    Choose how often Airbyte should run this connection. See [sync schedules](#sync-schedules) below.
+  </Step>
+
+  <Step title="Save the connection">
+    Click **Set up connection**. Airbyte creates the connection and, depending on your schedule, may trigger the first sync immediately.
+  </Step>
+</Steps>
+
+## Sync schedules
+
+Connections support three scheduling modes:
+
+<AccordionGroup>
+  <Accordion title="Scheduled (every N hours)">
+    Airbyte syncs at a fixed interval. The available intervals are:
+
+    - Every 1 hour
+    - Every 2 hours
+    - Every 3 hours
+    - Every 6 hours
+    - Every 8 hours
+    - Every 12 hours
+    - Every 24 hours (default)
+
+    Some connectors have source-specific defaults. For example, MongoDB connections default to every 6 hours.
+
+    <Note>
+      Sub-hourly intervals (15 minutes, 30 minutes) are available on some Airbyte plans.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Cron expression">
+    Use a cron expression for precise scheduling. Cron expressions follow the standard quartz format:
+
+    ```
+    # ┌──────── minute (0-59)
+    # │ ┌────── hour (0-23)
+    # │ │ ┌──── day of month (1-31)
+    # │ │ │ ┌── month (1-12)
+    # │ │ │ │ ┌ day of week (0-6, SUN-SAT)
+    # │ │ │ │ │
+      0 6 * * 1   # Every Monday at 06:00 UTC
+    ```
+  </Accordion>
+
+  <Accordion title="Manual">
+    Airbyte does not sync automatically. You trigger each sync manually from the connection page by clicking **Sync now**, or via the API.
+  </Accordion>
+</AccordionGroup>
+
+## Stream selection and sync modes
+
+Each stream on a connection can be configured independently. The sync mode you select per stream controls how Airbyte reads from the source and writes to the destination:
+
+| Source mode | Destination mode | Combined label | Description |
+|---|---|---|---|
+| `full_refresh` | `overwrite` | Full Refresh - Overwrite | Reads everything; replaces destination on each sync. |
+| `full_refresh` | `append` | Full Refresh - Append | Reads everything; appends to destination on each sync. |
+| `incremental` | `append` | Incremental - Append | Reads new/changed records; appends to destination. |
+| `incremental` | `append_dedup` | Incremental - Append + Deduped | Reads new/changed records; deduplicates by primary key. |
+
+<Tip>
+  Stream sync modes are stored in the `ConfiguredAirbyteCatalog`. You can view and edit the raw catalog via the API using `PATCH /connections/{connectionId}`.
+</Tip>
+
+## Schema change handling
+
+When the source schema changes — for example, a new column is added or a field type changes — Airbyte detects the difference during a sync and can respond in one of three ways:
+
+| Setting | Behavior |
+|---|---|
+| **Propagate column changes** (default) | Automatically add new columns to destination tables. Breaking changes (removed columns, type changes) pause the connection. |
+| **Propagate all changes** | Automatically apply both non-breaking and breaking schema changes. |
+| **Ignore** | Continue syncing with the old schema; do not update the destination. |
+| **Pause connection** | Stop syncing when any schema change is detected until you manually review and accept it. |
+
+When a breaking schema change requires your attention, Airbyte displays a banner on the connection page and sends a notification if you have connection update notifications enabled.
+
+## Connection status and sync history
+
+The connection **Overview** tab shows:
+
+- **Current status** — healthy, failed, or paused
+- **Last sync** — timestamp and number of records synced
+- **Data moved** — a time-series chart of bytes synced per run
+- **Stream status** — per-stream sync status for the most recent run
+
+The **Job history** tab lists every sync attempt with:
+
+- Start time and duration
+- Records emitted and committed
+- Log output for debugging failures
+
+## Resetting a connection
+
+Resetting a connection clears the sync state (cursor and primary key bookmarks) and marks all destination data for re-sync. The next sync will re-read all records from the source and overwrite the destination.
+
+<Warning>
+  A reset deletes the destination data for all selected streams before re-syncing. This cannot be undone. Use resets when the destination data is corrupted or you need to apply a new primary key.
+</Warning>
+
+To reset a connection, open the connection, click the **...** menu, and select **Reset data**. You can reset all streams or select individual streams to reset.
+
+## Manage connections via the API
+
+You can create, update, delete, and trigger connections programmatically using the Airbyte API.
+
+**Create a connection:**
+
+```bash
+curl -X POST "https://api.airbyte.com/v1/connections" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sourceId": "95e66a59-8045-4307-9678-63bc3c9b8c93",
+    "destinationId": "e478de0d-a3a0-475c-b019-25f7dd29e281",
+    "name": "Postgres-to-BigQuery"
+  }'
+```
+
+**List connections in a workspace:**
+
+```bash
+curl -X GET "https://api.airbyte.com/v1/connections?workspaceIds=<workspace-id>" \
+  -H "Authorization: Bearer <token>"
+```
+
+**Get a connection:**
+
+```bash
+curl -X GET "https://api.airbyte.com/v1/connections/<connection-id>" \
+  -H "Authorization: Bearer <token>"
+```
+
+The response includes the full connection configuration:
+
+```json
+{
+  "connectionId": "9924bcd0-99be-453d-ba47-c2c9766f7da5",
+  "name": "Postgres To Snowflake",
+  "workspaceId": "18dccc91-0ab1-4f72-9ed7-0b8fc27c5826",
+  "sourceId": "9924bcd0-99be-453d-ba47-c2c9766f7da5",
+  "destinationId": "744cc0ed-7f05-4949-9e60-2a814f90c035"
+}
+```
+
+**Trigger a manual sync:**
+
+```bash
+curl -X POST "https://api.airbyte.com/v1/jobs" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "connectionId": "<connection-id>",
+    "jobType": "sync"
+  }'
+```
+
+**Delete a connection:**
+
+```bash
+curl -X DELETE "https://api.airbyte.com/v1/connections/<connection-id>" \
+  -H "Authorization: Bearer <token>"
+```

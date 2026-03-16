@@ -1,0 +1,134 @@
+---
+title: "Destinations"
+description: "Add and manage destination connectors in Airbyte to load data into target systems."
+keywords: ["destination", "connector", "normalization", "data warehouse", "loading"]
+---
+
+A destination connector receives records from a source and writes them to a target system. Destinations can be data warehouses, data lakes, databases, object storage, or any system that can store structured data.
+
+## Add a destination
+
+<Steps>
+  <Step title="Open the Destinations page">
+    In the left sidebar, click **Destinations**. You see a list of all destinations already configured in your workspace.
+  </Step>
+
+  <Step title="Create a new destination">
+    Click **New destination** in the top-right corner. The connector catalog opens.
+  </Step>
+
+  <Step title="Select a connector">
+    Search for the connector you want — for example, **BigQuery**, **Snowflake**, or **S3** — and click it.
+  </Step>
+
+  <Step title="Configure the destination">
+    Fill in the required fields:
+
+    - **Destination name** — a label for this destination within your workspace
+    - **Connection credentials** — service account keys, connection strings, access tokens, or other authentication details
+    - **Target schema or dataset** — where Airbyte should write data
+    - **Optional settings** — file format, compression, loading method, and other connector-specific options
+  </Step>
+
+  <Step title="Test the connection">
+    Click **Test connection**. Airbyte runs the connector's `check` operation to confirm it can write to the target system with the supplied credentials.
+  </Step>
+
+  <Step title="Save the destination">
+    Click **Save destination**. The destination is now available to use in connections.
+  </Step>
+</Steps>
+
+## Normalization
+
+When syncing to a data warehouse destination such as BigQuery or Snowflake, Airbyte can optionally normalize the raw data it lands.
+
+<Tabs>
+  <Tab title="Raw tables (no normalization)">
+    Airbyte writes records to a raw table with three columns:
+
+    - `_airbyte_raw_id` — a unique UUID for each row
+    - `_airbyte_emitted_at` — the timestamp when Airbyte emitted the record
+    - `_airbyte_data` — the full record as a JSON string
+
+    Use raw tables when you want maximum flexibility and plan to transform data in your warehouse with dbt or another tool.
+  </Tab>
+  <Tab title="Normalized tables">
+    Airbyte unpacks `_airbyte_data` into individual columns based on the stream's schema. Nested objects are flattened into sub-tables joined by a foreign key.
+
+    Normalization runs as a separate job after each sync and is billed separately on Airbyte Cloud.
+  </Tab>
+</Tabs>
+
+## Common configuration fields
+
+While each connector defines its own schema, most destination connectors share several common fields:
+
+- **Host / Project / Account** — the endpoint or identifier of the target system
+- **Authentication** — service account JSON, OAuth, access key/secret pair, or username and password
+- **Default schema** — the schema or dataset where Airbyte creates tables
+- **Namespace format** — controls how Airbyte names destination schemas (defaults to the source namespace)
+- **Loading method** — batch file staging vs. direct insert (warehouse-specific)
+
+## Supported destination sync modes
+
+Destinations declare which sync modes they support. The modes available on a connection depend on the intersection of what the source stream supports and what the destination supports.
+
+| Destination sync mode | Behavior |
+|---|---|
+| `overwrite` | Truncates and rewrites the destination table on each sync. |
+| `append` | Adds new rows to the destination table without removing existing rows. |
+| `append_dedup` | Appends rows then deduplicates by primary key, keeping the latest version of each record. |
+| `overwrite_dedup` | Rewrites the table and deduplicates in one pass. |
+
+## Manage destinations via the API
+
+You can create, update, and delete destinations programmatically using the Airbyte API at `https://api.airbyte.com/v1`.
+
+**List destinations in a workspace:**
+
+```bash
+curl -X GET "https://api.airbyte.com/v1/destinations?workspaceIds=<workspace-id>" \
+  -H "Authorization: Bearer <token>"
+```
+
+**Create a destination:**
+
+```bash
+curl -X POST "https://api.airbyte.com/v1/destinations" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Postgres",
+    "workspaceId": "2155ae5a-de39-4808-af6a-16fe7b8b4ed2",
+    "configuration": {
+      "airbyte_destination_name": "postgres",
+      "host": "warehouse.example.com",
+      "port": 5432,
+      "database": "analytics",
+      "username": "airbyte",
+      "password": "<password>",
+      "schema": "public"
+    }
+  }'
+```
+
+**Update a destination:**
+
+```bash
+curl -X PATCH "https://api.airbyte.com/v1/destinations/<destination-id>" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "Updated destination name" }'
+```
+
+**Delete a destination:**
+
+```bash
+curl -X DELETE "https://api.airbyte.com/v1/destinations/<destination-id>" \
+  -H "Authorization: Bearer <token>"
+```
+
+<Warning>
+  Deleting a destination removes the destination configuration but does not delete data already written to the target system. Delete dependent connections before removing the destination.
+</Warning>

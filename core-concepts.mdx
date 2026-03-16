@@ -1,0 +1,124 @@
+---
+title: "Core concepts"
+description: "Key terms and abstractions you need to know before working with Airbyte."
+---
+
+Airbyte is a data integration platform for building ELT pipelines from APIs, databases, and files to databases, warehouses, and data lakes. Before you configure your first pipeline, it helps to understand the core abstractions the platform is built on.
+
+## Concepts
+
+<AccordionGroup>
+  <Accordion title="Workspace">
+    A **workspace** is the top-level organizational unit in Airbyte. Everything you configure — sources, destinations, connections — lives inside a workspace.
+
+    Workspaces are also the primary unit for feature-flag targeting. The platform evaluates flags with a `Workspace` context (identified by UUID), so a flag can be enabled for one workspace without affecting others. You manage multiple workspaces through a single Airbyte installation, and each workspace has its own set of secrets, notifications, and usage metrics.
+
+    In the API and configuration database, the workspace is referenced by a UUID (for example, `3d2985a0-a412-45f4-9124-e15800b739be`).
+  </Accordion>
+
+  <Accordion title="Source">
+    A **source** is a configured instance of a source connector. It stores the credentials and settings needed to read data from an external system — a database, an API, a file, or any other origin.
+
+    Sources are backed by **source definitions**, which describe the connector (its Docker image, version, and specification). A single source definition (for example, Postgres) can be instantiated as many sources across your workspace, each pointing to a different server.
+
+    When you configure a source, Airbyte runs a **Check** operation (via `CheckCommand`) against the connector to verify that the supplied credentials are valid before saving.
+  </Accordion>
+
+  <Accordion title="Destination">
+    A **destination** is a configured instance of a destination connector. It stores the credentials and settings needed to write data to an external system — a data warehouse, a database, a file store, and so on.
+
+    Like sources, destinations are backed by **destination definitions**. Airbyte validates destination credentials with a **Check** operation before the configuration is saved.
+  </Accordion>
+
+  <Accordion title="Connection">
+    A **connection** links a source to a destination and defines *how* data flows between them. A connection holds:
+
+    - Which **streams** to sync and with what sync mode (Full Refresh or Incremental)
+    - The **sync schedule** (manual, cron, or every N hours/minutes)
+    - The **destination namespace** and stream prefix
+    - Column selection rules (field-level filtering)
+    - Notification settings
+
+    Each connection has a stable UUID that appears in logs, metrics, and the Workload API. The `ReplicationCommand` uses the connection ID to identify the sync job it is running.
+  </Accordion>
+
+  <Accordion title="Sync">
+    A **sync** (also called a *sync job* or *attempt*) is a single execution of a connection. During a sync, Airbyte:
+
+    1. Reads records from the source connector
+    2. Passes records through any configured mappers or transformations
+    3. Writes records to the destination connector
+
+    Syncs are orchestrated by [Temporal](https://temporal.io/) workflows and executed by worker commands (`ReplicationCommand`). Each sync run produces an attempt record in the database with a status (`running`, `succeeded`, `failed`, `cancelled`).
+
+    The platform tracks per-sync statistics including `recordsSynced`, `bytesSynced`, `startTime`, and `endTime` via `StandardSyncSummary`.
+  </Accordion>
+
+  <Accordion title="Stream">
+    A **stream** is a named collection of records within a source — analogous to a table in a database or an endpoint in an API. Every source exposes one or more streams.
+
+    Streams have a **schema** (a set of typed fields) that Airbyte discovers by running the **Discover** operation (`DiscoverCommand`) against the source connector.
+
+    In a connection you choose which streams to include and how to sync each one. Stream-level statistics (`streamStats`) are captured in each sync attempt summary.
+  </Accordion>
+
+  <Accordion title="Catalog">
+    The **catalog** is the full list of streams (and their schemas) that a source exposes. Airbyte calls the source connector's `discover` command to produce a catalog.
+
+    There are two related concepts:
+
+    - **Discovered catalog** — the raw output from the connector, listing every available stream and field.
+    - **Configured catalog** — the subset you have selected for a specific connection, annotated with sync mode choices and primary keys.
+
+    Airbyte stores discovered catalogs by content hash to avoid redundant re-discovery. The `DiscoverCommand` can generate a stable workload ID (`generateDiscoverWorkloadIdV2WithSnap`) that deduplicates auto-refresh discover jobs within a configurable time window.
+  </Accordion>
+
+  <Accordion title="Incremental sync">
+    **Incremental sync** is a sync mode where only new or changed records are read from the source on each run. The connector uses a **cursor field** (typically a timestamp or auto-increment ID) to track progress. The platform stores cursor state between syncs so the next run knows where to resume.
+
+    Incremental sync dramatically reduces data transfer and destination write costs for large datasets. The platform stores stream-level state in PostgreSQL and passes it back to the connector at the start of each run.
+
+    There are two variants:
+    - **Incremental | Append** — new records are appended to the destination table.
+    - **Incremental | Append + Deduped** — new records are appended, then the destination deduplicates on primary key.
+  </Accordion>
+
+  <Accordion title="Full Refresh">
+    **Full Refresh** is a sync mode where the connector reads *all* records from the source on every run, regardless of what was synced previously. It is the simplest mode and is appropriate when:
+
+    - The source does not support a cursor field
+    - The dataset is small enough that full reads are affordable
+    - You need a complete, authoritative snapshot in the destination
+
+    Full Refresh has two destination behaviors:
+    - **Full Refresh | Overwrite** — the destination table is replaced entirely on each sync.
+    - **Full Refresh | Append** — each full read is appended as a new batch, preserving history.
+
+    <Note>
+      The platform supports **Resumable Full Refresh** (controlled by the `platform.enable-resumable-full-refresh` feature flag), which allows a full refresh sync to checkpoint progress and resume after a failure rather than restarting from scratch.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Change Data Capture (CDC)">
+    **Change Data Capture** is a specialized form of incremental sync for databases that support a replication log (such as PostgreSQL logical replication, MySQL binlog, or MongoDB change streams). Instead of scanning a cursor column, CDC reads directly from the database's change log to capture inserts, updates, *and* deletes in real time.
+
+    CDC connectors use the **Incremental** sync mode internally but emit delete records alongside normal upserts. The destination must support deduplication or merge behavior to handle deletes correctly.
+
+    CDC state is stored as an opaque JSON blob (the replication log offset or LSN) and replayed to the connector at the start of each run.
+  </Accordion>
+</AccordionGroup>
+
+## How the concepts relate
+
+```
+Workspace
+└── Source (instance of a SourceDefinition)
+└── Destination (instance of a DestinationDefinition)
+└── Connection (Source → Destination)
+    ├── Configured Catalog (subset of Streams + sync modes)
+    └── Sync Jobs (attempts)
+        ├── Records read from Source streams
+        └── Records written to Destination
+```
+
+A single workspace can contain many sources and destinations. Each connection pairs exactly one source with one destination. A connection's configured catalog selects which streams flow through it and controls whether each stream syncs via Full Refresh or Incremental.

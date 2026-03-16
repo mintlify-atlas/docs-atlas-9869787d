@@ -1,0 +1,278 @@
+---
+title: "Sources API"
+description: "Create, update, and manage data sources."
+---
+
+A source is a configured instance of a source connector (such as Postgres, Stripe, or Google Ads) that Airbyte reads data from during a sync.
+
+## Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/sources` | List sources |
+| `POST` | `/v1/sources` | Create a source |
+| `GET` | `/v1/sources/{sourceId}` | Get source details |
+| `PATCH` | `/v1/sources/{sourceId}` | Partially update a source |
+| `PUT` | `/v1/sources/{sourceId}` | Fully replace a source |
+| `DELETE` | `/v1/sources/{sourceId}` | Delete a source |
+| `POST` | `/v1/sources/initiateOAuth` | Initiate OAuth for a source |
+
+---
+
+## List sources
+
+<CodeGroup>
+```bash curl
+curl https://api.airbyte.com/v1/sources \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+`GET /v1/sources`
+
+### Query parameters
+
+<ParamField query="workspaceIds" type="array of UUID">
+  Filter by workspace UUID. If omitted, all accessible workspaces are returned.
+</ParamField>
+
+<ParamField query="includeDeleted" type="boolean">
+  Include soft-deleted sources. Defaults to `false`.
+</ParamField>
+
+<ParamField query="limit" type="integer">
+  Maximum number of sources to return. Minimum `1`, maximum `100`, default `20`.
+</ParamField>
+
+<ParamField query="offset" type="integer">
+  Number of sources to skip. Default `0`.
+</ParamField>
+
+### Response
+
+<ResponseField name="data" type="array" required>
+  Array of source objects.
+  <Expandable title="Source object">
+    <ResponseField name="sourceId" type="string (UUID)" required>Unique identifier for the source.</ResponseField>
+    <ResponseField name="name" type="string" required>Display name of the source.</ResponseField>
+    <ResponseField name="sourceType" type="string" required>Connector type identifier, e.g. `postgres`.</ResponseField>
+    <ResponseField name="definitionId" type="string (UUID)" required>UUID of the connector definition.</ResponseField>
+    <ResponseField name="workspaceId" type="string (UUID)" required>ID of the workspace that owns this source.</ResponseField>
+    <ResponseField name="configuration" type="object" required>Connector-specific configuration. Secret values are masked as `***`.</ResponseField>
+    <ResponseField name="createdAt" type="integer (int64)" required>Unix timestamp of creation.</ResponseField>
+    <ResponseField name="resourceAllocation" type="object">Custom resource requirements for sync workers.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Create a source
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.airbyte.com/v1/sources \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My Postgres Source",
+    "workspaceId": "744cc0ed-7f05-4949-9e60-2a814f90c035",
+    "configuration": {
+      "airbyte_source_name": "postgres",
+      "host": "db.example.com",
+      "port": 5432,
+      "database": "mydb",
+      "username": "airbyte",
+      "password": "secret"
+    }
+  }'
+```
+</CodeGroup>
+
+`POST /v1/sources`
+
+Creates a source given a name, workspace ID, and a configuration object.
+
+### Request body
+
+<ParamField body="name" type="string" required>
+  Display name for the source, e.g. `dev-postgres`.
+</ParamField>
+
+<ParamField body="workspaceId" type="string (UUID)" required>
+  ID of the workspace to create the source in.
+</ParamField>
+
+<ParamField body="configuration" type="object" required>
+  Connector-specific configuration. Must include `airbyte_source_name` (the connector slug) or provide `definitionId`. Other fields depend on the connector's specification.
+</ParamField>
+
+<ParamField body="definitionId" type="string (UUID)">
+  UUID of the connector definition. Either `definitionId` or `configuration.airbyte_source_name` is required.
+</ParamField>
+
+<ParamField body="secretId" type="string">
+  Optional secret ID obtained through an OAuth redirect flow.
+</ParamField>
+
+<ParamField body="resourceAllocation" type="object">
+  Custom CPU and memory requirements for sync workers.
+  <Expandable title="Resource allocation">
+    <ParamField body="default" type="object">Default resource requirements applied to all job types.</ParamField>
+    <ParamField body="jobSpecific" type="array">Per-job-type resource overrides.</ParamField>
+  </Expandable>
+</ParamField>
+
+### Response
+
+Returns a [source object](#response) with HTTP `200`.
+
+---
+
+## Get a source
+
+<CodeGroup>
+```bash curl
+curl https://api.airbyte.com/v1/sources/18dccc91-0ab1-4f72-9ed7-0b8fc27c5826 \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+`GET /v1/sources/{sourceId}`
+
+### Path parameters
+
+<ParamField path="sourceId" type="string (UUID)" required>
+  ID of the source to retrieve.
+</ParamField>
+
+### Query parameters
+
+<ParamField query="includeSecretCoordinates" type="boolean">
+  When `true`, returns secret coordinate information instead of `***` for secret fields.
+</ParamField>
+
+### Response
+
+Returns a single [source object](#response).
+
+---
+
+## Update a source (partial)
+
+<CodeGroup>
+```bash curl
+curl -X PATCH https://api.airbyte.com/v1/sources/18dccc91-0ab1-4f72-9ed7-0b8fc27c5826 \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My Updated Postgres Source"
+  }'
+```
+</CodeGroup>
+
+`PATCH /v1/sources/{sourceId}`
+
+Partially updates a source. Only the fields you include are changed.
+
+### Path parameters
+
+<ParamField path="sourceId" type="string (UUID)" required>
+  ID of the source to update.
+</ParamField>
+
+### Request body
+
+<ParamField body="name" type="string">New display name.</ParamField>
+<ParamField body="workspaceId" type="string (UUID)">Move the source to a different workspace.</ParamField>
+<ParamField body="configuration" type="object">Updated connector configuration.</ParamField>
+<ParamField body="secretId" type="string">Secret ID from an OAuth flow.</ParamField>
+<ParamField body="resourceAllocation" type="object">Updated resource requirements.</ParamField>
+
+---
+
+## Update a source (full replace)
+
+<CodeGroup>
+```bash curl
+curl -X PUT https://api.airbyte.com/v1/sources/18dccc91-0ab1-4f72-9ed7-0b8fc27c5826 \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My Postgres Source",
+    "configuration": {
+      "airbyte_source_name": "postgres",
+      "host": "db.example.com",
+      "port": 5432,
+      "database": "mydb",
+      "username": "airbyte",
+      "password": "newsecret"
+    }
+  }'
+```
+</CodeGroup>
+
+`PUT /v1/sources/{sourceId}`
+
+Fully replaces the source's name and configuration. All required configuration fields must be provided.
+
+### Path parameters
+
+<ParamField path="sourceId" type="string (UUID)" required>
+  ID of the source to replace.
+</ParamField>
+
+### Request body
+
+<ParamField body="name" type="string" required>Display name.</ParamField>
+<ParamField body="configuration" type="object" required>Complete connector configuration.</ParamField>
+<ParamField body="resourceAllocation" type="object">Resource requirements.</ParamField>
+
+---
+
+## Delete a source
+
+<CodeGroup>
+```bash curl
+curl -X DELETE https://api.airbyte.com/v1/sources/18dccc91-0ab1-4f72-9ed7-0b8fc27c5826 \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+`DELETE /v1/sources/{sourceId}`
+
+### Path parameters
+
+<ParamField path="sourceId" type="string (UUID)" required>
+  ID of the source to delete.
+</ParamField>
+
+### Response
+
+Returns HTTP `204 No Content` on success.
+
+---
+
+## Initiate OAuth for a source
+
+`POST /v1/sources/initiateOAuth`
+
+Starts an OAuth flow for a source that supports OAuth. Returns a redirect URL that you can send the user to for authentication. After the user authenticates, Airbyte stores the resulting tokens and returns a `secret_id` query parameter to your redirect URL. Use that `secretId` when creating the source.
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.airbyte.com/v1/sources/initiateOAuth \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sourceType": "google-ads",
+    "workspaceId": "744cc0ed-7f05-4949-9e60-2a814f90c035",
+    "redirectUrl": "https://yourapp.example.com/oauth/callback"
+  }'
+```
+</CodeGroup>
+
+### Response
+
+<ResponseField name="redirectUrl" type="string (URL)">
+  The URL to redirect the user to for authentication.
+</ResponseField>

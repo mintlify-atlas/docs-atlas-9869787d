@@ -1,0 +1,320 @@
+---
+title: "Python CDK"
+description: "Build any source or destination connector using the Airbyte Python CDK with full control over sync logic."
+keywords: ["python CDK", "AbstractSource", "HttpStream", "IncrementalStream", "connector development"]
+---
+
+The Python CDK gives you full control over connector behavior. Use it when you need to build a destination connector, connect to a non-REST source (database, queue, file system, GraphQL), or when the logic is too complex for a YAML manifest.
+
+## Install the CDK
+
+```bash
+pip install airbyte-cdk==7.10.0
+```
+
+For connector development, create a new directory and install the CDK in a virtual environment:
+
+```bash
+mkdir my-source-connector && cd my-source-connector
+python -m venv .venv && source .venv/bin/activate
+pip install airbyte-cdk==7.10.0
+```
+
+## Source connectors
+
+### AbstractSource
+
+All source connectors extend `AbstractSource` from `airbyte_cdk.sources`:
+
+```python
+from airbyte_cdk.sources import AbstractSource
+from airbyte_cdk.models import ConnectorSpecification
+from typing import Any, Iterator, List, Mapping, MutableMapping, Optional, Tuple
+import requests
+
+class SourceMyApi(AbstractSource):
+
+    def check_connection(self, logger, config) -> Tuple[bool, Optional[Any]]:
+        """Test whether the supplied config can connect to the API."""
+        try:
+            response = requests.get(
+                "https://api.example.com/v1/me",
+                headers={"Authorization": f"Bearer {config['api_key']}"}
+            )
+            response.raise_for_status()
+            return True, None
+        except Exception as e:
+            return False, str(e)
+
+    def streams(self, config: Mapping[str, Any]) -> List:
+        """Return the list of streams this source exposes."""
+        auth = TokenAuthenticator(token=config["api_key"])
+        return [
+            Users(authenticator=auth),
+            Orders(authenticator=auth, start_date=config["start_date"]),
+        ]
+```
+
+### HttpStream
+
+For REST API streams, extend `HttpStream`:
+
+```python
+from airbyte_cdk.sources.streams.http import HttpStream
+from typing import Any, Iterable, Mapping, MutableMapping, Optional
+
+class Users(HttpStream):
+    url_base = "https://api.example.com/v1/"
+    primary_key = "id"
+
+    def path(self, **kwargs) -> str:
+        return "users"
+
+    def request_headers(self, **kwargs) -> Mapping[str, Any]:
+        return {"Accept": "application/json"}
+
+    def request_params(
+        self, stream_state: Mapping[str, Any], **kwargs
+    ) -> MutableMapping[str, Any]:
+        return {"limit": 100}
+
+    def parse_response(
+        self, response: requests.Response, **kwargs
+    ) -> Iterable[Mapping]:
+        data = response.json()
+        yield from data.get("items", [])
+
+    def next_page_token(
+        self, response: requests.Response
+    ) -> Optional[Mapping[str, Any]]:
+        data = response.json()
+        if cursor := data.get("next_cursor"):
+            return {"cursor": cursor}
+        return None
+
+    def request_params(self, next_page_token=None, **kwargs):
+        params = {"limit": 100}
+        if next_page_token:
+            params["cursor"] = next_page_token["cursor"]
+        return params
+```
+
+### IncrementalStream
+
+For streams that support incremental sync, mix in `IncrementalMixin`:
+
+```python
+from airbyte_cdk.sources.streams.http import HttpStream
+from airbyte_cdk.sources.streams import IncrementalMixin
+from datetime import datetime
+from typing import Any, Mapping, MutableMapping, Optional
+
+class Orders(HttpStream, IncrementalMixin):
+    url_base = "https://api.example.com/v1/"
+    primary_key = "id"
+    cursor_field = "updated_at"
+
+    def __init__(self, start_date: str, **kwargs):
+        super().__init__(**kwargs)
+        self._start_date = start_date
+        self._cursor_value: Optional[str] = None
+
+    @property
+    def state(self) -> MutableMapping[str, Any]:
+        return {self.cursor_field: self._cursor_value or self._start_date}
+
+    @state.setter
+    def state(self, value: Mapping[str, Any]):
+        self._cursor_value = value.get(self.cursor_field)
+
+    def path(self, **kwargs) -> str:
+        return "orders"
+
+    def request_params(
+        self, stream_state: Mapping[str, Any], **kwargs
+    ) -> MutableMapping[str, Any]:
+        start = stream_state.get(self.cursor_field, self._start_date)
+        return {"updated_since": start, "limit": 100}
+
+    def read_records(self, stream_state=None, **kwargs):
+        for record in super().read_records(stream_state=stream_state, **kwargs):
+            if record.get(self.cursor_field, "") >= self.state[self.cursor_field]:
+                self._cursor_value = record[self.cursor_field]
+            yield record
+
+    def parse_response(self, response, **kwargs):
+        yield from response.json().get("orders", [])
+```
+
+## Authentication helpers
+
+The CDK provides ready-made authenticators:
+
+```python
+from airbyte_cdk.sources.streams.http.auth import (
+    TokenAuthenticator,
+    BasicHttpAuthenticator,
+    Oauth2Authenticator,
+)
+
+# Bearer token
+auth = TokenAuthenticator(token=config["api_key"])
+
+# Basic auth
+auth = BasicHttpAuthenticator(
+    username=config["username"],
+    password=config["password"]
+)
+
+# OAuth 2.0 with client credentials
+auth = Oauth2Authenticator(
+    token_refresh_endpoint="https://api.example.com/oauth/token",
+    client_id=config["client_id"],
+    client_secret=config["client_secret"],
+    refresh_token=config["refresh_token"],
+)
+```
+
+Pass the authenticator to each stream:
+
+```python
+def streams(self, config):
+    auth = TokenAuthenticator(token=config["api_key"])
+    return [Users(authenticator=auth)]
+```
+
+## Connector spec
+
+Define the connector spec in `spec.yaml` (or return it from `spec()`):
+
+```yaml
+documentationUrl: https://docs.example.com/connector
+connectionSpecification:
+  $schema: http://json-schema.org/draft-07/schema#
+  title: My API
+  type: object
+  required:
+    - api_key
+    - start_date
+  additionalProperties: true
+  properties:
+    api_key:
+      type: string
+      title: API Key
+      airbyte_secret: true
+      description: Your API key from the developer portal.
+    start_date:
+      type: string
+      title: Start date
+      format: date
+      pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+      description: Earliest date to sync records from (YYYY-MM-DD).
+```
+
+## Destination connectors
+
+Destination connectors extend `Destination`:
+
+```python
+from airbyte_cdk.destinations import Destination
+from airbyte_cdk.models import (
+    AirbyteConnectionStatus,
+    ConfiguredAirbyteCatalog,
+    ConnectorSpecification,
+    Status,
+    AirbyteMessage,
+)
+from typing import Any, Iterable, Mapping
+
+class DestinationMyWarehouse(Destination):
+
+    def check(self, logger, config: Mapping[str, Any]) -> AirbyteConnectionStatus:
+        try:
+            # Test connection to the target system
+            client = MyWarehouseClient(**config)
+            client.ping()
+            return AirbyteConnectionStatus(status=Status.SUCCEEDED)
+        except Exception as e:
+            return AirbyteConnectionStatus(
+                status=Status.FAILED,
+                message=str(e)
+            )
+
+    def write(
+        self,
+        config: Mapping[str, Any],
+        configured_catalog: ConfiguredAirbyteCatalog,
+        input_messages: Iterable[AirbyteMessage],
+    ) -> Iterable[AirbyteMessage]:
+        client = MyWarehouseClient(**config)
+
+        for message in input_messages:
+            if message.type == Type.RECORD:
+                client.insert(message.record.stream, message.record.data)
+            elif message.type == Type.STATE:
+                # Flush buffered records before acknowledging state
+                client.flush()
+                yield message
+```
+
+## Connector catalog
+
+The `discover` operation returns a `ConfiguredAirbyteCatalog`. For `HttpStream`-based connectors the CDK generates this automatically from the stream class. You can override `get_json_schema()` to return a custom schema:
+
+```python
+class Users(HttpStream):
+    primary_key = "id"
+
+    def get_json_schema(self):
+        return {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "name": {"type": "string"},
+                "email": {"type": "string", "format": "email"},
+                "created_at": {"type": "string", "format": "date-time"}
+            }
+        }
+```
+
+## Run and test locally
+
+The CDK CLI lets you exercise all four protocol operations against a real source:
+
+```bash
+# Spec
+python main.py spec
+
+# Check connection
+python main.py check --config secrets/config.json
+
+# Discover catalog
+python main.py discover --config secrets/config.json
+
+# Read records
+python main.py read \
+  --config secrets/config.json \
+  --catalog integration_tests/configured_catalog.json
+```
+
+Create `main.py` at the root of your connector:
+
+```python
+import sys
+from airbyte_cdk.entrypoint import launch
+from source_my_api import SourceMyApi
+
+if __name__ == "__main__":
+    source = SourceMyApi()
+    launch(source, sys.argv[1:])
+```
+
+## Running acceptance tests
+
+```bash
+pip install connector-acceptance-test
+python -m pytest integration_tests/ -p connector_acceptance_test.plugin -v
+```
+
+The acceptance test configuration lives in `acceptance-test-config.yml`. At minimum it runs `spec`, `check`, `discover`, and `basic_read` test scenarios.

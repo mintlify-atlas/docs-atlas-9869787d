@@ -1,0 +1,105 @@
+---
+title: "Introduction"
+description: "Airbyte is an open-source data integration platform for building ELT pipelines from any source to any destination."
+---
+
+## What is Airbyte?
+
+Airbyte is an open-source data movement platform that makes it easy to replicate data from APIs, databases, files, and more into your data warehouse, data lake, or any other destination. With 300+ pre-built connectors, a powerful public API, and a visual UI, Airbyte is the fastest way to move data reliably at scale.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get Airbyte running locally in minutes using Docker Compose
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/core-concepts">
+    Understand sources, destinations, connections, and syncs
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/architecture/overview">
+    Explore how Airbyte's platform components work together
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Programmatically manage Airbyte with the REST API
+  </Card>
+</CardGroup>
+
+## Key capabilities
+
+<CardGroup cols={2}>
+  <Card title="300+ Connectors" icon="plug">
+    Pre-built connectors for popular databases, SaaS APIs, data warehouses, and data lakes — with new connectors added regularly.
+  </Card>
+  <Card title="Visual UI" icon="display">
+    A full-featured web application for configuring connections, monitoring syncs, and managing workspaces without writing code.
+  </Card>
+  <Card title="Connector Development Kits" icon="wrench">
+    Build custom connectors using the low-code CDK or Python CDK. No need to understand Airbyte internals.
+  </Card>
+  <Card title="Temporal-Powered Orchestration" icon="timer">
+    Reliable workflow orchestration using Temporal ensures syncs are retried automatically and tracked end-to-end.
+  </Card>
+  <Card title="Kubernetes-Native Deployment" icon="cloud">
+    Deploy on any Kubernetes cluster using official Helm charts with support for multi-plane architecture.
+  </Card>
+  <Card title="Airbyte Embedded" icon="puzzle-piece">
+    White-label Airbyte's data integration capabilities into your own product with the Embedded SDK and config templates.
+  </Card>
+</CardGroup>
+
+## Airbyte products
+
+<Tabs>
+  <Tab title="Airbyte OSS">
+    **Airbyte Open Source** is fully self-hosted and free to use under the MIT and ELv2 licenses. Deploy it on your own infrastructure using Docker Compose or Kubernetes.
+
+    - Full control over your data and infrastructure
+    - All 300+ connectors included
+    - Community support via Slack and GitHub
+    - Upgrade at your own pace
+  </Tab>
+  <Tab title="Airbyte Cloud">
+    **Airbyte Cloud** is the fully managed SaaS version of Airbyte. Get started in minutes with no infrastructure to manage.
+
+    - Automatic upgrades and scaling
+    - SSO and RBAC for teams
+    - SLA-backed reliability
+    - Pay-as-you-go pricing based on data volume
+  </Tab>
+  <Tab title="Airbyte Enterprise">
+    **Airbyte Self-Managed Enterprise** provides a self-hosted option with enterprise-grade features including:
+
+    - Role-based access control (RBAC)
+    - Single sign-on (SSO) via Keycloak
+    - Audit logging
+    - Priority support and SLAs
+  </Tab>
+</Tabs>
+
+## How Airbyte works
+
+Airbyte moves data in three steps:
+
+<Steps>
+  <Step title="Extract">
+    Airbyte reads data from your **source** (a database, API, file, etc.) using a source connector. The connector authenticates, discovers the available data streams, and reads records incrementally or in full refresh mode.
+  </Step>
+  <Step title="Load">
+    Records are written to your **destination** (a data warehouse, database, or file storage) using a destination connector. Airbyte handles schema creation, type coercion, and deduplication.
+  </Step>
+  <Step title="Transform (optional)">
+    After loading, you can run dbt transformations on your destination to normalize or model your data. Airbyte integrates natively with dbt Cloud and dbt Core.
+  </Step>
+</Steps>
+
+## Resources
+
+<CardGroup cols={3}>
+  <Card title="GitHub" icon="github" href="https://github.com/airbytehq/airbyte-platform">
+    Browse the source code, file issues, and contribute
+  </Card>
+  <Card title="Slack Community" icon="slack" href="https://slack.airbyte.io">
+    Join thousands of data engineers in our community Slack
+  </Card>
+  <Card title="Connector Catalog" icon="list" href="https://docs.airbyte.com/integrations/">
+    Browse all 300+ available connectors
+  </Card>
+</CardGroup>

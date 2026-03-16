@@ -1,80 +1,123 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Get Airbyte running locally with Docker Compose in under 10 minutes."
 ---
 
-## Get started in three steps
+This guide walks you through running Airbyte on your local machine using Docker Compose. By the end you will have the full platform running and your first data connection created.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+Before you start, make sure you have the following installed:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+- **Docker** 20.10.0 or later ([install Docker](https://docs.docker.com/get-docker/))
+- **Docker Compose** v2.0.0 or later (bundled with Docker Desktop; verify with `docker compose version`)
+- At least **4 GB of RAM** allocated to Docker
+- **Git**
 
-### Step 2: Deploy your changes
+<Warning>
+  On macOS, open **Docker Desktop → Settings → Resources** and set memory to at least 4 GB before proceeding.
+</Warning>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+## Run Airbyte
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+<Steps>
+  <Step title="Clone the repository">
+    Clone the Airbyte monorepo and move into it:
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash
+    git clone https://github.com/airbytehq/airbyte.git
+    cd airbyte
+    ```
+  </Step>
 
-### Step 3: Go live
+  <Step title="Start all services">
+    Run the helper script (or `docker compose` directly) to pull images and start every service:
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    ```bash
+    ./run-ab-platform.sh
+    ```
+
+    Alternatively, start the stack directly with Docker Compose:
+
+    ```bash
+    docker compose up -d
+    ```
+
+    On first run Docker pulls all container images. This typically takes 2–5 minutes depending on your connection speed.
+  </Step>
+
+  <Step title="Wait for the platform to become healthy">
+    Watch the bootloader complete database migrations and the server come online:
+
+    ```bash
+    docker compose logs -f airbyte-server
+    ```
+
+    Wait until you see a line similar to:
+
+    ```
+    INFO  i.a.s.ServerApp - Starting Airbyte Server
+    ```
+
+    The full startup sequence — bootloader migrations, Temporal worker registration, server readiness — takes roughly 30–60 seconds on a modern laptop.
+  </Step>
+
+  <Step title="Open the web UI">
+    Navigate to [http://localhost:8000](http://localhost:8000) in your browser.
+
+    The default credentials for a fresh local install are:
+
+    | Field | Value |
+    |-------|-------|
+    | **Username** | `airbyte` |
+    | **Password** | `password` |
+  </Step>
+
+  <Step title="Create your first connection">
+    1. In the left sidebar, click **Sources** and then **New source**.
+    2. Search for and select a source connector (for example, **GitHub** or **Faker** for a zero-credential test).
+    3. Fill in the required credentials and click **Set up source**.
+    4. Click **Destinations** → **New destination** and configure where you want the data to land (for example, **Local JSON** for a quick local test).
+    5. Click **Connections** → **New connection**, select the source and destination you just created, choose a sync frequency, and click **Set up connection**.
+    6. Click **Sync now** to run your first sync.
+
+    <Tip>
+      Use the **Faker** source connector to generate synthetic data without needing any external API credentials. Pair it with the **Local JSON** destination to see records land immediately on disk.
+    </Tip>
+  </Step>
+</Steps>
+
+## Verify the sync succeeded
+
+After the sync completes, the **Connections** page shows a green status badge and the number of records synced. Click the connection name to see per-stream stats and logs.
+
+## Stopping Airbyte
+
+To stop all containers while preserving your data:
+
+```bash
+docker compose down
+```
+
+To stop and remove all data volumes (full reset):
+
+```bash
+docker compose down -v
+```
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Core concepts" icon="book" href="/core-concepts">
+    Learn about workspaces, connections, streams, and sync modes.
+  </Card>
+  <Card title="Architecture overview" icon="diagram-project" href="/architecture/overview">
+    Understand how Airbyte's services fit together.
+  </Card>
+  <Card title="Platform components" icon="cubes" href="/architecture/components">
+    Dive into each service: server, workers, bootloader, and more.
+  </Card>
+  <Card title="Feature flags" icon="flag" href="/architecture/feature-flags">
+    Control runtime behavior with Airbyte's feature flag system.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

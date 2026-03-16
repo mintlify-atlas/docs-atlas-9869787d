@@ -1,0 +1,246 @@
+---
+title: "Destinations API"
+description: "Create, update, and manage data destinations."
+---
+
+A destination is a configured instance of a destination connector (such as BigQuery, Snowflake, or S3) that Airbyte writes data to during a sync.
+
+## Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/destinations` | List destinations |
+| `POST` | `/v1/destinations` | Create a destination |
+| `GET` | `/v1/destinations/{destinationId}` | Get destination details |
+| `PATCH` | `/v1/destinations/{destinationId}` | Partially update a destination |
+| `PUT` | `/v1/destinations/{destinationId}` | Fully replace a destination |
+| `DELETE` | `/v1/destinations/{destinationId}` | Delete a destination |
+
+---
+
+## List destinations
+
+<CodeGroup>
+```bash curl
+curl https://api.airbyte.com/v1/destinations \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+`GET /v1/destinations`
+
+### Query parameters
+
+<ParamField query="workspaceIds" type="array of UUID">
+  Filter by workspace UUID. If omitted, all accessible workspaces are returned.
+</ParamField>
+
+<ParamField query="includeDeleted" type="boolean">
+  Include soft-deleted destinations. Defaults to `false`.
+</ParamField>
+
+<ParamField query="limit" type="integer">
+  Maximum number of destinations to return. Minimum `1`, maximum `100`, default `20`.
+</ParamField>
+
+<ParamField query="offset" type="integer">
+  Number of destinations to skip. Default `0`.
+</ParamField>
+
+### Response
+
+<ResponseField name="data" type="array" required>
+  Array of destination objects.
+  <Expandable title="Destination object">
+    <ResponseField name="destinationId" type="string (UUID)" required>Unique identifier for the destination.</ResponseField>
+    <ResponseField name="name" type="string" required>Display name of the destination.</ResponseField>
+    <ResponseField name="destinationType" type="string" required>Connector type identifier, e.g. `postgres`, `bigquery`.</ResponseField>
+    <ResponseField name="definitionId" type="string (UUID)" required>UUID of the connector definition.</ResponseField>
+    <ResponseField name="workspaceId" type="string (UUID)" required>ID of the workspace that owns this destination.</ResponseField>
+    <ResponseField name="configuration" type="object" required>Connector-specific configuration. Secret values are masked as `***`.</ResponseField>
+    <ResponseField name="createdAt" type="integer (int64)" required>Unix timestamp of creation.</ResponseField>
+    <ResponseField name="resourceAllocation" type="object">Custom resource requirements for sync workers.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Create a destination
+
+<CodeGroup>
+```bash curl
+curl -X POST https://api.airbyte.com/v1/destinations \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Analytics Postgres",
+    "workspaceId": "2155ae5a-de39-4808-af6a-16fe7b8b4ed2",
+    "configuration": {
+      "airbyte_destination_name": "postgres",
+      "host": "analytics-db.example.com",
+      "port": 5432,
+      "database": "analytics",
+      "schema": "public",
+      "username": "airbyte",
+      "password": "secret",
+      "ssl_mode": { "mode": "prefer" },
+      "tunnel_method": { "tunnel_method": "NO_TUNNEL" }
+    }
+  }'
+```
+</CodeGroup>
+
+`POST /v1/destinations`
+
+Creates a destination given a name, workspace ID, and a configuration object.
+
+### Request body
+
+<ParamField body="name" type="string" required>
+  Display name for the destination, e.g. `analytics-postgres`.
+</ParamField>
+
+<ParamField body="workspaceId" type="string (UUID)" required>
+  ID of the workspace to create the destination in.
+</ParamField>
+
+<ParamField body="configuration" type="object" required>
+  Connector-specific configuration. Must include `airbyte_destination_name` (the connector slug) or provide `definitionId`.
+</ParamField>
+
+<ParamField body="definitionId" type="string (UUID)">
+  UUID of the connector definition. Either `definitionId` or `configuration.airbyte_destination_name` is required.
+</ParamField>
+
+<ParamField body="resourceAllocation" type="object">
+  Custom CPU and memory requirements for sync workers.
+</ParamField>
+
+### Response
+
+Returns a [destination object](#response) with HTTP `200`.
+
+---
+
+## Get a destination
+
+<CodeGroup>
+```bash curl
+curl https://api.airbyte.com/v1/destinations/18dccc91-0ab1-4f72-9ed7-0b8fc27c5826 \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+`GET /v1/destinations/{destinationId}`
+
+### Path parameters
+
+<ParamField path="destinationId" type="string (UUID)" required>
+  ID of the destination to retrieve.
+</ParamField>
+
+### Query parameters
+
+<ParamField query="includeSecretCoordinates" type="boolean">
+  When `true`, returns secret coordinate information instead of `***` for secret fields.
+</ParamField>
+
+### Response
+
+Returns a single [destination object](#response).
+
+---
+
+## Update a destination (partial)
+
+<CodeGroup>
+```bash curl
+curl -X PATCH https://api.airbyte.com/v1/destinations/18dccc91-0ab1-4f72-9ed7-0b8fc27c5826 \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Analytics Postgres (prod)"
+  }'
+```
+</CodeGroup>
+
+`PATCH /v1/destinations/{destinationId}`
+
+Partially updates a destination. Only the fields you include are changed.
+
+### Path parameters
+
+<ParamField path="destinationId" type="string (UUID)" required>
+  ID of the destination to update.
+</ParamField>
+
+### Request body
+
+<ParamField body="name" type="string">New display name.</ParamField>
+<ParamField body="configuration" type="object">Updated connector configuration.</ParamField>
+<ParamField body="resourceAllocation" type="object">Updated resource requirements.</ParamField>
+
+---
+
+## Update a destination (full replace)
+
+<CodeGroup>
+```bash curl
+curl -X PUT https://api.airbyte.com/v1/destinations/18dccc91-0ab1-4f72-9ed7-0b8fc27c5826 \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Analytics Postgres",
+    "configuration": {
+      "airbyte_destination_name": "postgres",
+      "host": "analytics-db.example.com",
+      "port": 5432,
+      "database": "analytics",
+      "schema": "public",
+      "username": "airbyte",
+      "password": "newsecret",
+      "ssl_mode": { "mode": "require" },
+      "tunnel_method": { "tunnel_method": "NO_TUNNEL" }
+    }
+  }'
+```
+</CodeGroup>
+
+`PUT /v1/destinations/{destinationId}`
+
+Fully replaces the destination's name and configuration. All required fields must be provided.
+
+### Path parameters
+
+<ParamField path="destinationId" type="string (UUID)" required>
+  ID of the destination to replace.
+</ParamField>
+
+### Request body
+
+<ParamField body="name" type="string" required>Display name.</ParamField>
+<ParamField body="configuration" type="object" required>Complete connector configuration.</ParamField>
+<ParamField body="resourceAllocation" type="object">Resource requirements.</ParamField>
+
+---
+
+## Delete a destination
+
+<CodeGroup>
+```bash curl
+curl -X DELETE https://api.airbyte.com/v1/destinations/18dccc91-0ab1-4f72-9ed7-0b8fc27c5826 \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+`DELETE /v1/destinations/{destinationId}`
+
+### Path parameters
+
+<ParamField path="destinationId" type="string (UUID)" required>
+  ID of the destination to delete.
+</ParamField>
+
+### Response
+
+Returns HTTP `204 No Content` on success.

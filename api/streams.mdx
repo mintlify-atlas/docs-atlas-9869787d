@@ -1,0 +1,127 @@
+---
+title: "Streams API"
+description: "Inspect available streams and their properties for a source and destination pair."
+---
+
+The Streams API lets you discover what streams a source exposes and which sync modes are compatible with a given destination. Use this to build UIs or automation that presents stream selection before creating or updating a connection.
+
+## Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/streams` | Get stream properties for a source/destination pair |
+
+---
+
+## Get stream properties
+
+<CodeGroup>
+```bash curl
+curl "https://api.airbyte.com/v1/streams?sourceId=18dccc91-0ab1-4f72-9ed7-0b8fc27c5826&destinationId=744cc0ed-7f05-4949-9e60-2a814f90c035" \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+`GET /v1/streams`
+
+Returns the list of available streams for the given source, including supported sync modes, cursor fields, and primary key information. When you provide a `destinationId`, the response filters to sync modes that are compatible with that destination.
+
+### Query parameters
+
+<ParamField query="sourceId" type="string (UUID)" required>
+  ID of the source to retrieve stream properties for.
+</ParamField>
+
+<ParamField query="destinationId" type="string (UUID)">
+  ID of the destination. When provided, sync modes are filtered to those compatible with this destination.
+</ParamField>
+
+<ParamField query="ignoreCache" type="boolean">
+  When `true`, Airbyte fetches the latest schema directly from the source rather than using a cached version. Defaults to `false`.
+</ParamField>
+
+### Response
+
+Returns an array of stream property objects.
+
+<ResponseField name="streamName" type="string">
+  Name of the stream.
+</ResponseField>
+
+<ResponseField name="streamnamespace" type="string">
+  Namespace the stream belongs to (if the source defines namespaces).
+</ResponseField>
+
+<ResponseField name="syncModes" type="array of string">
+  Sync modes supported by this stream. Possible values:
+  - `full_refresh_overwrite`
+  - `full_refresh_overwrite_deduped`
+  - `full_refresh_append`
+  - `full_refresh_update`
+  - `full_refresh_soft_delete`
+  - `incremental_append`
+  - `incremental_deduped_history`
+  - `incremental_update`
+  - `incremental_soft_delete`
+</ResponseField>
+
+<ResponseField name="defaultCursorField" type="array of string">
+  Default cursor field path used for incremental syncs.
+</ResponseField>
+
+<ResponseField name="sourceDefinedCursorField" type="boolean">
+  Whether the cursor field is defined by the source and cannot be changed.
+</ResponseField>
+
+<ResponseField name="sourceDefinedPrimaryKey" type="array">
+  Primary key paths defined by the source schema.
+</ResponseField>
+
+<ResponseField name="propertyFields" type="array">
+  Array of field paths available in this stream.
+</ResponseField>
+
+### Example response
+
+```json
+[
+  {
+    "streamName": "orders",
+    "streamnamespace": "public",
+    "syncModes": [
+      "full_refresh_overwrite",
+      "incremental_append",
+      "incremental_deduped_history"
+    ],
+    "defaultCursorField": ["updated_at"],
+    "sourceDefinedCursorField": false,
+    "sourceDefinedPrimaryKey": [["id"]],
+    "propertyFields": [
+      ["id"],
+      ["customer_id"],
+      ["total"],
+      ["updated_at"]
+    ]
+  },
+  {
+    "streamName": "customers",
+    "streamnamespace": "public",
+    "syncModes": [
+      "full_refresh_overwrite",
+      "incremental_append"
+    ],
+    "defaultCursorField": ["created_at"],
+    "sourceDefinedCursorField": false,
+    "sourceDefinedPrimaryKey": [["id"]],
+    "propertyFields": [
+      ["id"],
+      ["email"],
+      ["created_at"]
+    ]
+  }
+]
+```
+
+<Tip>
+Call this endpoint before creating or modifying a connection to let users select streams and pick compatible sync modes.
+</Tip>

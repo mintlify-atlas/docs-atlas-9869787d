@@ -1,0 +1,158 @@
+---
+title: "Upgrading Airbyte"
+description: "How to upgrade Airbyte with minimal downtime, including database migrations and rollback procedures."
+keywords: ["upgrade", "migration", "version", "update", "database migration"]
+---
+
+Airbyte upgrades are managed through the `airbyte-bootloader` service. Every time the stack starts, the bootloader runs Flyway database migrations to bring the schema up to date with the new version before the server begins accepting traffic.
+
+## How upgrades work
+
+<Steps>
+  <Step title="Bootloader runs database migrations">
+    The bootloader container (`airbyte/bootloader`) runs as a Kubernetes Job (or Docker Compose service) and applies any pending Flyway migrations against the `db-airbyte` database. It exits once all migrations complete successfully.
+
+    The bootloader checks two minimum migration thresholds:
+    - **Config DB**: `CONFIGS_DATABASE_MINIMUM_FLYWAY_MIGRATION_VERSION` (default `0.35.15.001`)
+    - **Jobs DB**: `JOBS_DATABASE_MINIMUM_FLYWAY_MIGRATION_VERSION` (default `0.29.15.001`)
+
+    If the current schema is below the minimum, the bootloader refuses to start and logs an error. This prevents skipping over versions that contain breaking schema changes.
+  </Step>
+
+  <Step title="Server starts after migrations">
+    The server waits for the bootloader to succeed before Micronaut starts serving requests. Because migrations complete before any API traffic reaches the new version, there is no window where a new server tries to query an unmigratedschema.
+  </Step>
+
+  <Step title="Workers and connectors update">
+    Workers and connector images are updated independently. Connector image versions are pinned in the connector registry and updated by the cron service when you refresh the catalog.
+  </Step>
+</Steps>
+
+## Upgrading with Helm
+
+<Steps>
+  <Step title="Update the Helm repository">
+    ```bash
+    helm repo update
+    ```
+  </Step>
+
+  <Step title="Review the changelog">
+    Before upgrading, check the release notes for breaking changes. Pay special attention to entries that mention database schema changes or configuration key renames.
+  </Step>
+
+  <Step title="Back up your database">
+    Always take a PostgreSQL dump before upgrading:
+
+    ```bash
+    kubectl exec -n airbyte deployment/airbyte-db -- \
+      pg_dump -U airbyte db-airbyte > airbyte-backup-$(date +%Y%m%d).sql
+    ```
+
+    Store the backup in a durable location before proceeding.
+
+    <Warning>Skipping a database backup before a major version upgrade risks data loss if you need to roll back.</Warning>
+  </Step>
+
+  <Step title="Run the upgrade">
+    ```bash
+    helm upgrade airbyte airbyte/airbyte \
+      --namespace airbyte \
+      --values airbyte-values.yaml
+    ```
+
+    Helm triggers a rolling rollout. The bootloader Job runs first via the `pre-upgrade` hook, applies migrations, and then the server deployment rolls out.
+  </Step>
+
+  <Step title="Verify the upgrade">
+    ```bash
+    kubectl get pods -n airbyte
+    kubectl logs -n airbyte job/airbyte-bootloader
+    ```
+
+    Confirm all pods are `Running` and the bootloader logs show `Successfully migrated`.
+  </Step>
+</Steps>
+
+## Upgrading with Docker Compose
+
+<Steps>
+  <Step title="Pull the latest images">
+    ```bash
+    docker compose pull
+    ```
+  </Step>
+
+  <Step title="Back up the database">
+    ```bash
+    docker compose exec db pg_dump -U docker airbyte > airbyte-backup-$(date +%Y%m%d).sql
+    ```
+  </Step>
+
+  <Step title="Restart the stack">
+    ```bash
+    docker compose down
+    docker compose up -d
+    ```
+
+    The bootloader container runs, applies migrations, and exits. The server starts once migration succeeds.
+  </Step>
+</Steps>
+
+## Version management
+
+The Airbyte version is tracked in `charts/v2/airbyte/Chart.yaml` (`appVersion`) and propagated at runtime via the `AIRBYTE_VERSION` environment variable. All service containers are tagged with matching image versions.
+
+To pin a specific version, set the image tag in your `values.yaml`:
+
+```yaml
+global:
+  image:
+    tag: "1.2.3"  # pin all airbyte images to this tag
+```
+
+## Rollback procedures
+
+### Helm rollback
+
+If the upgrade fails, roll back to the previous Helm release revision:
+
+```bash
+# List recent revisions
+helm history airbyte -n airbyte
+
+# Roll back to revision 3
+helm rollback airbyte 3 -n airbyte
+```
+
+<Warning>Rolling back does not reverse database migrations. If the new version applied schema changes, the older server code may be incompatible with the migrated schema. Always restore from your database backup when rolling back after a schema migration.</Warning>
+
+### Database restore
+
+Restore from a PostgreSQL dump:
+
+```bash
+kubectl exec -i -n airbyte deployment/airbyte-db -- \
+  psql -U airbyte db-airbyte < airbyte-backup-20260101.sql
+```
+
+## Skipping versions
+
+Airbyte does not support skipping multiple major versions in a single upgrade. If you are several versions behind, upgrade sequentially. The minimum Flyway migration versions (`CONFIGS_DATABASE_MINIMUM_FLYWAY_MIGRATION_VERSION` and `JOBS_DATABASE_MINIMUM_FLYWAY_MIGRATION_VERSION`) enforce this by refusing to start if the schema is too old.
+
+## Breaking changes between versions
+
+<AccordionGroup>
+  <Accordion title="Checking for breaking changes">
+    Before each upgrade, read the release notes at `https://github.com/airbytehq/airbyte/releases` for entries tagged `breaking change`. Common breaking changes include:
+
+    - Renamed or removed environment variables
+    - Changes to the `values.yaml` key structure
+    - Connector registry format changes
+    - Auth configuration restructuring (e.g. Keycloak realm changes)
+  </Accordion>
+
+  <Accordion title="Configuration key renames">
+    When a config key is renamed, the old key continues to work for one release cycle to give you time to update your `values.yaml`. After that, the old key is removed. Always update your values file before the next upgrade.
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,233 @@
+---
+title: "Monitoring"
+description: "Metrics, health checks, Temporal workflow monitoring, and log aggregation for Airbyte deployments."
+keywords: ["monitoring", "metrics", "health check", "observability", "logs", "statsd", "otlp", "opentelemetry"]
+---
+
+Airbyte emits metrics via [Micrometer](https://micrometer.io/), exposes HTTP health endpoints on every service, and uses Temporal for durable workflow execution that you can inspect through the Temporal UI.
+
+## Enabling metrics
+
+Metrics are disabled by default. Enable them in `values.yaml` and choose a backend.
+
+### StatsD / Datadog
+
+```yaml
+global:
+  metrics:
+    enabled: true
+    step: "PT1M"  # publish every minute
+
+    statsd:
+      enabled: true
+      flavor: datadog  # or influxdb
+      # host defaults to the node IP (status.hostIP) via the Kubernetes downward API
+      port: 8125
+```
+
+Environment variables set by the chart:
+
+| Variable | Value |
+|---|---|
+| `MICROMETER_METRICS_ENABLED` | `true` |
+| `MICROMETER_METRICS_STATSD_ENABLED` | `true` |
+| `MICROMETER_METRICS_STATSD_FLAVOR` | `datadog` |
+| `STATSD_HOST` | node IP |
+| `STATSD_PORT` | `8125` |
+
+### OpenTelemetry (OTLP)
+
+```yaml
+global:
+  metrics:
+    enabled: true
+
+    otlp:
+      enabled: true
+      collectorEndpoint: "http://otel-collector.monitoring:4317"
+
+    otel:
+      exporter:
+        name: otlp
+        protocol: grpc
+        timeout: 30000          # ms
+        metricExportInterval: 10000  # ms
+```
+
+Environment variables set by the chart:
+
+| Variable | Value |
+|---|---|
+| `MICROMETER_METRICS_OTLP_ENABLED` | `true` |
+| `OTEL_COLLECTOR_ENDPOINT` | your collector URL |
+
+## Public metric names
+
+These metrics are considered stable and are safe to use in dashboards and alerts:
+
+| Metric | Type | Description |
+|---|---|---|
+| `api_requests` | counter | Total requests to the Airbyte API. |
+| `gb_moved` | gauge | Gigabytes moved during a sync job. |
+| `syncs_duration` | gauge | Sync duration in seconds. |
+| `syncs` | counter | Count of syncs by status (tagged by `status`). |
+
+## Internal metric names
+
+Internal metrics are emitted by the platform for diagnostic purposes. They may change between versions.
+
+<AccordionGroup>
+  <Accordion title="Sync and job metrics">
+    | Metric | Description |
+    |---|---|
+    | `attempt_created` | Increments when a new attempt is created. |
+    | `attempt_completed` | Increments when an attempt completes. |
+    | `attempt_failed_by_failure_origin` | Tagged by failure origin and type. |
+    | `job_completed` | Increments when a job finishes. |
+    | `num_pending_jobs` | Current number of pending jobs. |
+    | `num_running_jobs` | Current number of running jobs. |
+    | `oldest_pending_job_age_secs` | Age of the oldest pending job in seconds. |
+    | `oldest_running_job_age_secs` | Age of the oldest running job in seconds. |
+    | `overall_job_runtime_in_last_hour_by_terminal_state_secs` | Job runtime distribution for the last hour. |
+    | `num_unusually_long_syncs` | Syncs running unusually long vs. historical performance. |
+    | `replication_made_progress` | Count of replication runs that made progress. |
+  </Accordion>
+
+  <Accordion title="Workload launcher metrics">
+    | Metric | Description |
+    |---|---|
+    | `workload_received` | Workloads received from the queue. |
+    | `workload_claimed` | Workloads successfully claimed. |
+    | `workload_not_claimed` | Failed claim attempts. |
+    | `workload_processed` | Workloads fully processed. |
+    | `workload_launch_duration` | Distribution of workload launch times. |
+    | `workload_launch_status` | Outcome of a workload launch as reported to the control plane. |
+    | `workload_queue_size` | Current queue depth. |
+    | `workload_launcher_active_launch` | Workloads actively being processed (claimed to completion). |
+    | `workload_kube_error` | Kubernetes API errors in the launcher. |
+    | `workload_launcher_image_pull_failure` | Image pull failures during pod launch. |
+    | `workload_pods_cleaned` | Pods cleaned up by the pod sweeper. |
+  </Accordion>
+
+  <Accordion title="Temporal workflow metrics">
+    | Metric | Description |
+    |---|---|
+    | `temporal_workflow_attempt` | Count of workflow execution attempts. |
+    | `temporal_workflow_success` | Count of successful workflow syncs. |
+    | `temporal_workflow_failure` | Count of workflow failures. |
+    | `temporal_api_transient_error_retry` | Retries on transient Temporal API errors. |
+    | `workflow_unreachable` | Workflows that became unreachable. |
+    | `workflows_healed` | Workflows healed by the self-healing cron. |
+  </Accordion>
+
+  <Accordion title="State and schema change metrics">
+    | Metric | Description |
+    |---|---|
+    | `state_processed_from_source` | State messages received from source. |
+    | `state_processed_from_destination` | State messages received from destination. |
+    | `state_buffering` | State messages buffered before flush. |
+    | `state_checksum_error` | State checksum errors for a connection. |
+    | `breaking_change_detected` | Breaking schema changes detected. |
+    | `non_breaking_change_detected` | Non-breaking schema changes detected. |
+    | `schema_change_auto_propagated` | Schema changes automatically propagated. |
+  </Accordion>
+</AccordionGroup>
+
+## Metric tags
+
+Metrics are tagged with attributes from `MetricTags`. Commonly used tags:
+
+| Tag | Values | Description |
+|---|---|---|
+| `connection_id` | UUID | The connection involved in the operation. |
+| `job_id` | integer | Job identifier. |
+| `job_status` | `succeeded`, `failed`, `cancelled` | Terminal job status. |
+| `attempt_outcome` | `succeeded`, `failed` | Attempt result. |
+| `failure_origin` | `source`, `destination`, `airbyte_platform`, `unknown` | Where the failure occurred. |
+| `failure_type` | `system_error`, `config_error` | Failure classification. |
+| `workspace_id` | UUID | Workspace identifier. |
+| `organization_id` | UUID | Organization identifier. |
+| `data_plane_id` | UUID | Data plane identifier. |
+| `release_stage` | `alpha`, `beta`, `generally_available` | Connector release stage. |
+
+## Health check endpoints
+
+All Java services expose a Micronaut management endpoint on port `8085`:
+
+```
+GET http://<service>:8085/health
+```
+
+A healthy response returns HTTP `200` with a JSON body:
+
+```json
+{ "status": "UP" }
+```
+
+The server additionally exposes its main API on port `8000`. Kubernetes liveness and readiness probes for the server are configured in `values.yaml` under `server.livenessProbe` and `server.readinessProbe`.
+
+The webapp (nginx) responds on port `8080`.
+
+## Temporal workflow monitoring
+
+The bundled Temporal UI is available as the `airbyte-temporal-ui` deployment. To access it:
+
+```bash
+kubectl port-forward -n airbyte svc/airbyte-temporal-ui-svc 8088:8080
+```
+
+Then open `http://localhost:8088` to browse workflows, view execution history, and inspect failures.
+
+For Temporal Cloud integrations, point `global.temporal.cloud.host` at your Temporal Cloud namespace endpoint and supply the client certificate and key:
+
+```yaml
+global:
+  temporal:
+    cloud:
+      enabled: true
+      host: "<namespace>.tmprl.cloud:7233"
+      namespace: "<namespace>.<account>"
+      clientCertSecretKey: TEMPORAL_CLOUD_CLIENT_CERT
+      clientKeySecretKey: TEMPORAL_CLOUD_CLIENT_KEY
+```
+
+## Log aggregation
+
+Connector logs are written to the configured object storage backend (`STORAGE_BUCKET_LOG`). You can access them through the Airbyte UI under a connection's **Job history** or via the API.
+
+For structured log aggregation across all services, forward pod logs to your log aggregation stack using your cluster's standard tooling:
+
+<Tabs>
+  <Tab title="Fluent Bit">
+    Deploy Fluent Bit as a DaemonSet and configure an output plugin pointing to Elasticsearch, Datadog, or any other destination. Airbyte services log to stdout/stderr in JSON format when `LOG_LEVEL=INFO`.
+  </Tab>
+  <Tab title="Datadog Agent">
+    Enable the Datadog Agent DaemonSet and set `global.datadog.enabled: true` in `values.yaml`. The Datadog integration also collects StatsD metrics from the DogStatsD endpoint.
+
+    ```yaml
+    global:
+      datadog:
+        enabled: true
+        env: production
+        traceAgentPort: 8126
+        statsd:
+          port: 8125
+    ```
+  </Tab>
+  <Tab title="OpenTelemetry">
+    Deploy the OpenTelemetry Collector as a sidecar or DaemonSet. Configure the `otlp` metrics exporter in `values.yaml` (see above) and route logs via a Filelog receiver.
+  </Tab>
+</Tabs>
+
+## Alerting recommendations
+
+Set up alerts on these conditions to catch problems early:
+
+| Alert | Condition | Severity |
+|---|---|---|
+| Jobs not completing | `num_pending_jobs` > threshold for > 30 min | Warning |
+| Oldest pending job age | `oldest_pending_job_age_secs` > 3600 | Critical |
+| Sync failure rate | `syncs{status=failed}` rate > 10% | Warning |
+| Workload queue depth | `workload_queue_size` > 100 | Warning |
+| Image pull failures | `workload_launcher_image_pull_failure` > 0 | Warning |
+| Temporal workflow failures | `temporal_workflow_failure` rate > 0 | Critical |

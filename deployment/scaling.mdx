@@ -1,0 +1,225 @@
+---
+title: "Scaling Airbyte"
+description: "Tune resource allocation, scale workers, and separate control and data planes for high-throughput deployments."
+keywords: ["scaling", "workers", "resources", "horizontal scaling", "data plane", "high throughput"]
+---
+
+Airbyte separates the **control plane** (server, scheduler, API) from the **data plane** (workload launcher, connector pods). This architecture lets you scale sync throughput independently of the control surface.
+
+## Worker architecture
+
+Each sync runs as a Kubernetes Pod managed by the **workload launcher**. The launcher polls a workload queue, claims work, and launches connector pods in the `jobs` namespace. You can scale throughput by:
+
+1. Increasing the launcher's parallelism setting
+2. Running multiple launcher replicas
+3. Deploying additional data planes in separate clusters
+
+## Scaling workers horizontally
+
+### Workload launcher replicas
+
+Increase the number of workload launcher replicas in `values.yaml`:
+
+```yaml
+workloadLauncher:
+  replicaCount: 3
+```
+
+Each replica independently polls the workload queue. Airbyte uses a claim-based mutex so replicas do not process the same workload twice.
+
+### Parallelism and queue settings
+
+The workload queue routes work into three queues based on operation type:
+
+```yaml
+global:
+  workloads:
+    namespace: jobs  # namespace where connector pods are created
+
+    queues:
+      check: [CHECK_CONNECTION]
+      discover: [DISCOVER_SCHEMA]
+      sync: [SYNC]
+```
+
+Size the pods namespace's `ResourceQuota` to match your expected concurrency:
+
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: jobs-quota
+  namespace: jobs
+spec:
+  hard:
+    pods: "500"
+    requests.cpu: "200"
+    requests.memory: 400Gi
+    limits.cpu: "400"
+    limits.memory: 800Gi
+```
+
+## Data plane separation
+
+For multi-tenant or geo-distributed deployments, you can run data planes separately from the control plane. The control plane manages connections and schedules work; each data plane executes the actual syncs.
+
+### Control plane configuration
+
+In the control-plane deployment, set `cluster.type` to `control-plane`:
+
+```yaml
+global:
+  cluster:
+    type: control-plane
+
+    controlPlane:
+      bootstrap:
+        dataPlane:
+          secretName: "dp-credentials"
+          clientIdSecretKey: "client-id"
+          clientSecretSecretKey: "client-secret"
+```
+
+### Data plane configuration
+
+In the data-plane deployment:
+
+```yaml
+global:
+  cluster:
+    type: data-plane
+
+    dataPlane:
+      controlPlaneAuthEndpoint: "https://airbyte.example.com/auth"
+```
+
+Data plane groups let you assign connections to specific planes:
+
+```yaml
+global:
+  dataplaneGroups:
+    us-east:
+      label: "US East"
+    eu-west:
+      label: "EU West"
+```
+
+## Resource limits and requests
+
+### Control-plane services
+
+Set resource requests and limits for each service in its dedicated block:
+
+```yaml
+server:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
+
+workloadLauncher:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 1Gi
+```
+
+### Connector (job) pods
+
+Connector pods launched for syncs use the defaults from `global.jobs.resources`, but individual connections can override them via the Airbyte UI:
+
+```yaml
+global:
+  jobs:
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 500m
+      limits:
+        cpu: 2
+        memory: 4Gi
+
+    kube:
+      nodeSelector:
+        airbyte/node-pool: jobs  # schedule connector pods on dedicated nodes
+      tolerations:
+        - key: "airbyte/jobs"
+          operator: "Exists"
+          effect: "NoSchedule"
+```
+
+Workload-specific resource defaults:
+
+```yaml
+global:
+  workloads:
+    resources:
+      useConnectorResourceDefaults: true
+
+      mainContainer:
+        cpu: {}
+        memory: {}
+      replication:
+        cpu: {}
+        memory: {}
+      sidecar:
+        cpu: {}
+        memory: {}
+```
+
+## Node pool topology
+
+Airbyte supports routing different pod types to dedicated node pools using node selector labels:
+
+```yaml
+global:
+  topology:
+    nodeSelectorLabel: airbyte/node-pool
+    nodeSelectors:
+      mainNodePool: main       # control plane pods
+      jobsNodePool: jobs       # sync connector pods
+      quickJobsNodePool: quick-jobs  # check/discover pods
+```
+
+Label your nodes accordingly:
+
+```bash
+kubectl label node worker-1 airbyte/node-pool=jobs
+kubectl label node control-1 airbyte/node-pool=main
+```
+
+## Optimizing for high-throughput syncs
+
+<AccordionGroup>
+  <Accordion title="Database connection pooling">
+    Under high load, the server can exhaust its PostgreSQL connection pool. Increase the pool size via `server.configDbMaxPoolSize` in `values.yaml`, or put a PgBouncer instance in front of your PostgreSQL database.
+  </Accordion>
+
+  <Accordion title="Temporal scaling">
+    Temporal is the workflow engine driving all syncs. For very high connection counts, consider connecting to **Temporal Cloud** (`global.temporal.cloud.enabled: true`) rather than running the bundled Temporal service, which is limited to a single replica.
+  </Accordion>
+
+  <Accordion title="Object storage throughput">
+    Sync logs, state, and payloads all pass through object storage. For heavy workloads, use S3 or GCS instead of MinIO. MinIO is a single-pod deployment not suitable for sustained high-throughput production use.
+  </Accordion>
+
+  <Accordion title="File transfer storage">
+    When using the file-transfer feature, each workload mounts ephemeral storage. Increase the default storage limits:
+
+    ```yaml
+    global:
+      workloads:
+        resources:
+          fileTransfer:
+            storage:
+              request: 10G
+              limit: 20G
+    ```
+  </Accordion>
+</AccordionGroup>

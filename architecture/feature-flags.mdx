@@ -1,0 +1,253 @@
+---
+title: "Feature flags"
+description: "How Airbyte evaluates feature flags, the available backends, and a reference of flags defined in the platform."
+---
+
+Airbyte uses a feature flag system to control runtime behavior without requiring redeployments. Flags gate new features, enable debug tooling, tune performance parameters, and roll out changes incrementally to specific workspaces or organizations.
+
+## Flag types
+
+All flags are defined in Kotlin as singleton objects in `airbyte-featureflag/src/main/kotlin/FlagDefinitions.kt`. Every flag extends one of three base classes defined in `Flag.kt`:
+
+```kotlin
+// airbyte-featureflag/src/main/kotlin/Flag.kt
+
+sealed class Flag<T>(val key: String, val default: T, internal val attrs: Map<String, String> = mapOf())
+
+open class Temporary<T>(key: String, default: T, ...) : Flag<T>(...)   // expected to be removed eventually
+open class Permanent<T>(key: String, default: T, ...) : Flag<T>(...)   // intended to exist forever
+open class EnvVar(envVar: String, default: Boolean = false, ...) : Flag<Boolean>(...)  // legacy env-var backed flag
+```
+
+- **`Temporary`** flags wrap features under active development or gradual rollout. They should be removed once the rollout is complete.
+- **`Permanent`** flags control behavior that has no planned removal (for example, resource requirement variants, license entitlements).
+- **`EnvVar`** flags are a transitional mechanism that reads from environment variables. New flags should use `Temporary` or `Permanent` instead.
+
+## FeatureFlagClient interface
+
+All flag evaluation goes through the `FeatureFlagClient` sealed interface:
+
+```kotlin
+// airbyte-featureflag/src/main/kotlin/Client.kt
+
+sealed interface FeatureFlagClient {
+  fun boolVariation(flag: Flag<Boolean>, context: Context): Boolean
+  fun stringVariation(flag: Flag<String>, context: Context): String
+  fun intVariation(flag: Flag<Int>, context: Context): Int
+
+  fun <T> variation(flag: Flag<T>, context: Context): T  // dispatches to the typed methods above
+}
+```
+
+The generic `variation()` method dispatches to the correct typed method based on `flag.default`'s runtime type. Unsupported types throw `IllegalArgumentException`.
+
+Three production implementations are provided, selected at startup via `airbyte.feature-flag.client`:
+
+## Client implementations
+
+<Tabs>
+  <Tab title="ConfigFileClient (default)">
+    `ConfigFileClient` reads flag values from a YAML file (by default `flags.yml`). It is the default for self-hosted deployments.
+
+    **Key behaviors:**
+    - Reads the YAML file on startup and builds an in-memory map of flag name → config.
+    - Watches the file for changes using Java NIO `WatchService` and reloads automatically in a low-priority daemon thread.
+    - Thread-safe updates via `ReentrantReadWriteLock` — readers are never blocked during a reload.
+    - Supports context-specific overrides: a flag entry can include a `context` list that serves a different value for named workspace/organization/connection IDs.
+    - Falls back to `flag.default` if the flag is absent from the file.
+
+    **Configuration property:** `airbyte.feature-flag.client` must *not* be set to `launchdarkly` or `ffs`.
+
+    **YAML format:**
+
+    ```yaml
+    flags:
+      - name: connection.columnSelection
+        serve: true
+      - name: platform.replication-debug-log-level-enabled
+        serve: false
+        context:
+          - type: workspace
+            include:
+              - 0ebcab60-29f1-426a-8208-c05a12a2335c
+            serve: true
+    ```
+
+    In the example above, `platform.replication-debug-log-level-enabled` is `false` globally but `true` for the single listed workspace UUID.
+  </Tab>
+
+  <Tab title="LaunchDarklyClient">
+    `LaunchDarklyClient` integrates with [LaunchDarkly](https://launchdarkly.com) for production feature flag management. It is activated by setting:
+
+    ```
+    airbyte.feature-flag.client=launchdarkly
+    ```
+
+    **Key behaviors:**
+    - Uses the LaunchDarkly Java server SDK (`LDClient`) for real-time flag evaluation.
+    - Converts Airbyte `Context` objects to `LDContext` for targeting.
+    - Supports a `ContextInterceptor` hook for dynamic context enrichment before evaluation.
+    - Falls back to `flag.default` when LaunchDarkly is unavailable.
+    - Legacy `EnvVar` flags bypass LaunchDarkly and read from environment variables.
+
+    **Context conversion to LaunchDarkly:**
+
+    ```kotlin
+    // Each Airbyte Context maps to an LDContext with the matching kind and key
+    val ldContext = LDContext.builder(ContextKind.of(context.kind), context.key).build()
+    // Multi contexts build a multi-context (LDContext.multiBuilder())
+    ```
+  </Tab>
+
+  <Tab title="FeatureFlagServiceClient">
+    `FeatureFlagServiceClient` communicates with Airbyte's internal Feature Flag Service (FFS) via HTTP. Activated by:
+
+    ```
+    airbyte.feature-flag.client=ffs
+    ```
+
+    Calls `GET {baseUrl}/api/v1/feature-flags/{key}/evaluate?kind={kind}&value={contextKey}` and returns the raw body as the flag value. Falls back to `flag.default` on any HTTP error.
+  </Tab>
+</Tabs>
+
+## Evaluation contexts
+
+Contexts identify the entity for which a flag is being evaluated. They are defined in `Context.kt`:
+
+| Context class | `kind` value | Typical use |
+|---------------|-------------|-------------|
+| `Workspace` | `workspace` | Enable a flag for specific workspace UUIDs |
+| `Organization` | `organization` | Enable a flag for an entire organization |
+| `User` | `user` | Target individual users (supports `EmailAttribute`) |
+| `Connection` | `connection` | Per-connection behavior |
+| `Source` | `source` | Per-source-actor behavior |
+| `Destination` | `destination` | Per-destination-actor behavior |
+| `SourceDefinition` | `source-definition` | Per-connector-type behavior |
+| `DestinationDefinition` | `destination-definition` | Per-connector-type behavior |
+| `Dataplane` | `dataplane` | Target a specific data plane |
+| `DataplaneGroup` | `dataplane-group` | Target a data plane group |
+| `PlaneName` | `plane-name` | Named plane (for example, `prod-gcp-dataplane-us-west-1-1`) |
+| `Priority` | `priority` | Job priority (`high`) |
+| `CloudProvider` | `cloud-provider` | Cloud provider (`aws`) |
+| `GeographicRegion` | `geographic-region` | Geographic region (`us`, `eu`) |
+
+You can combine multiple contexts using `Multi` for complex targeting:
+
+```kotlin
+// Evaluate a flag for both a user and their workspace simultaneously
+val context = Multi(listOf(User(userId), Workspace(workspaceId)))
+val enabled = featureFlagClient.boolVariation(SomeFlag, context)
+```
+
+You can also merge two contexts with the `merge` extension function:
+
+```kotlin
+val combined = Workspace(workspaceId).merge(User(userId))
+```
+
+## flags.yml reference
+
+The following flags are defined in `flags.yml` and applied to self-hosted installations:
+
+```yaml
+flags:
+  # JSON schema validation runs in the background (not on the sync hot path)
+  - name: performance.backgroundJsonSchemaValidation
+    serve: false
+
+  # Fail the sync when a heartbeat timeout is detected
+  - name: heartbeat.failSync
+    serve: false
+
+  # Allow connector version overrides (e.g. pin a workspace to a specific version)
+  - name: connectors.versionOverridesEnabled
+    serve: true
+
+  # Heartbeat window in seconds (default 3 hours)
+  - name: heartbeat-max-seconds-between-messages
+    serve: "10800"
+
+  # Column-level field selection in connections
+  - name: connection.columnSelection
+    serve: true
+
+  # Auto-refresh schema period in hours (0 = disabled)
+  - name: refreshSchema.period.hours
+    serve: 0
+
+  # Read source streams concurrently
+  - name: concurrent.source.stream.read
+    serve: false
+
+  # Add jitter to sync scheduling to spread load
+  - name: platform.add-scheduling-jitter
+    serve: false
+
+  # Monitor destination write calls for timeouts
+  - name: destination-timeout-enabled
+    serve: true
+
+  # Fail the sync when a destination timeout is detected
+  - name: destination-timeout.failSync
+    serve: true
+
+  # Seconds to wait before declaring a destination timed out (default 24 hours)
+  - name: destination-timeout.seconds
+    serve: 86400
+
+  # Inject AWS secrets into connector pods (for AWS deployments)
+  - name: platform.inject-aws-secrets-to-connector-pods
+    serve: false
+
+  # Fail sync if a record checksum mismatch is detected
+  - name: platform.fail-sync-on-invalid-checksum
+    serve: false
+
+  # Enable debug-level replication logging for a specific workspace
+  - name: platform.replication-debug-log-level-enabled
+    serve: false
+    context:
+      - type: workspace
+        include:
+          - 0ebcab60-29f1-426a-8208-c05a12a2335c
+        serve: true
+```
+
+## Selected flag definitions
+
+The following flags are defined as Kotlin objects in `FlagDefinitions.kt` and represent a representative sample of platform feature flags:
+
+| Flag object | Key | Default | Type | Description |
+|-------------|-----|---------|------|-------------|
+| `HeartbeatMaxSecondsBetweenMessages` | `heartbeat-max-seconds-between-messages` | `"10800"` | `Permanent<String>` | Max seconds between source messages before sync is considered stalled |
+| `ShouldFailSyncIfHeartbeatFailure` | `heartbeat.failSync` | `false` | `Permanent<Boolean>` | Fail the sync when a heartbeat timeout is detected |
+| `DestinationTimeoutEnabled` | `destination-timeout-enabled` | `true` | `Permanent<Boolean>` | Enable destination write timeout monitoring |
+| `ShouldFailSyncOnDestinationTimeout` | `destination-timeout.failSync` | `true` | `Permanent<Boolean>` | Fail the sync when a destination timeout is reached |
+| `DestinationTimeoutSeconds` | `destination-timeout.seconds` | `7200` | `Permanent<Int>` | Seconds before a destination write is considered timed out |
+| `EnableResumableFullRefresh` | `platform.enable-resumable-full-refresh` | `false` | `Temporary<Boolean>` | Allow full refresh syncs to checkpoint and resume after failure |
+| `AlwaysRunCheckBeforeSync` | `platform.always-run-check-before-sync` | `false` | `Permanent<Boolean>` | Run a credential check before every sync attempt |
+| `ConcurrentSourceStreamRead` | `concurrent.source.stream.read` | `false` | `Temporary<Boolean>` | Read multiple source streams in parallel |
+| `SubOneHourSyncSchedules` | `platform.allow-sub-one-hour-sync-frequency` | `true` | `Permanent<Boolean>` | Allow sync schedules shorter than one hour |
+| `ReplicationDebugLogLevelEnabled` | `platform.replication-debug-log-level-enabled` | `false` | `Permanent<Boolean>` | Emit debug-level replication logs |
+| `FailSyncOnInvalidChecksum` | `platform.fail-sync-on-invalid-checksum` | `false` | `Temporary<Boolean>` | Fail sync if record checksum validation fails |
+| `LoadShedWorkloadLauncher` | `platform.load-shed.workload-launcher` | `false` | `Permanent<Boolean>` | Enable load shedding in the workload launcher |
+| `UseRuntimeSecretPersistence` | `platform.use-runtime-secret-persistence` | `false` | `Temporary<Boolean>` | Use runtime secret persistence instead of static config |
+| `LicenseAllowEnterpriseConnector` | `license.allow-enterprise-connector` | `false` | `Permanent<Boolean>` | Allow enterprise connectors based on license |
+
+## Testing with feature flags
+
+In tests, use `TestClient` instead of mocking `FeatureFlagClient` directly (Mockito does not support mocking sealed interfaces):
+
+```kotlin
+// In a @MicronautTest annotated test class:
+@MockBean(FeatureFlagClient::class)
+fun featureFlagClient(): TestClient = mock(TestClient::class.java)
+
+// Or construct directly with a pre-populated values map:
+val client = TestClient(mapOf(
+    "platform.enable-resumable-full-refresh" to true,
+    "destination-timeout.seconds" to 3600,
+))
+```
+
+`TestClient` resolves flags from its `values` map by `flag.key`, falling back to `flag.default` for any key not present in the map.

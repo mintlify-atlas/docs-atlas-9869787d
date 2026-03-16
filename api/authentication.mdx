@@ -1,0 +1,101 @@
+---
+title: "Authentication"
+description: "How to authenticate requests to the Airbyte API using Bearer tokens."
+---
+
+The Airbyte API uses Bearer token authentication. Every API request must include a valid access token in the `Authorization` header.
+
+## Obtaining a token
+
+Airbyte uses an OAuth 2.0 client credentials flow. To get a token:
+
+1. Create an API application in the Airbyte UI under **Settings → Applications**.
+2. Copy the `clientId` and `clientSecret` from the application.
+3. Exchange those credentials for an access token using the `/applications/token` endpoint.
+
+```bash
+curl -X POST https://api.airbyte.com/applications/token \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_id": "<your-client-id>",
+    "client_secret": "<your-client-secret>",
+    "grant_type": "client_credentials"
+  }'
+```
+
+The response includes an `access_token`, its type (`Bearer`), and an expiry (`expires_in`, in seconds):
+
+```json
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "Bearer",
+  "expires_in": 3600
+}
+```
+
+<Note>
+Tokens expire after a set period indicated by `expires_in`. Request a new token before it expires to avoid interrupted workflows.
+</Note>
+
+## Using the token
+
+Include the access token in every request as a Bearer token in the `Authorization` header:
+
+```
+Authorization: Bearer <access_token>
+```
+
+<Tabs>
+  <Tab title="curl">
+```bash
+curl https://api.airbyte.com/v1/connections \
+  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+  </Tab>
+  <Tab title="Python">
+```python
+import requests
+
+token = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+response = requests.get(
+    "https://api.airbyte.com/v1/connections",
+    headers={"Authorization": f"Bearer {token}"}
+)
+print(response.json())
+```
+  </Tab>
+  <Tab title="TypeScript">
+```typescript
+const token = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...";
+
+const response = await fetch("https://api.airbyte.com/v1/connections", {
+  headers: {
+    Authorization: `Bearer ${token}`,
+  },
+});
+const data = await response.json();
+console.log(data);
+```
+  </Tab>
+</Tabs>
+
+## Token scopes and permissions
+
+The actions your token can perform depend on the permissions of the Airbyte user account associated with the application:
+
+| Permission type | Scope | Capabilities |
+|---|---|---|
+| `workspace_admin` | Workspace | Full read/write access to all resources in the workspace |
+| `workspace_editor` | Workspace | Create and update sources, destinations, and connections |
+| `workspace_runner` | Workspace | Trigger syncs and view job status |
+| `workspace_reader` | Workspace | Read-only access to workspace resources |
+| `organization_admin` | Organization | Manage workspaces, users, and permissions across the organization |
+| `organization_editor` | Organization | Create and update resources across the organization |
+| `organization_runner` | Organization | Trigger syncs across the organization |
+| `organization_reader` | Organization | Read-only access to all organization resources |
+| `organization_member` | Organization | Basic membership; limited read access |
+
+<Warning>
+Store your `clientSecret` securely. Do not include it in client-side code or commit it to version control.
+</Warning>

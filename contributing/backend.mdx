@@ -1,0 +1,247 @@
+---
+title: "Backend development"
+description: "How the Airbyte backend is structured and how to make changes to it."
+---
+
+The Airbyte platform backend is a multi-module Gradle project written primarily in **Kotlin**, with some legacy **Java**. It uses **Micronaut** as the application framework and **Temporal** for workflow orchestration.
+
+## Tech stack
+
+| Technology | Role |
+|------------|------|
+| Kotlin | Primary language for new backend code |
+| Java | Legacy code and some libraries |
+| Micronaut | Dependency injection, HTTP server, configuration |
+| Temporal | Durable workflow orchestration for sync jobs |
+| Flyway | Database migrations |
+| jOOQ | Typesafe SQL query builder |
+| JUnit 5 | Unit and integration testing |
+| PMD / ktlint | Static analysis and code style |
+
+## Project structure
+
+All platform modules live under the `oss/` namespace in Gradle and map to directories at the repository root. Key modules:
+
+<Accordion title="Core server modules">
+
+| Module | Directory | Responsibility |
+|--------|-----------|----------------|
+| `airbyte-server` | `airbyte-server/` | Configuration API — the main HTTP server that the UI and external API clients call |
+| `airbyte-commons-server` | `airbyte-commons-server/` | Shared server-side business logic, handlers, and service layer |
+| `airbyte-workers` | `airbyte-workers/` | Job execution logic — reads job definitions and runs connector processes |
+| `airbyte-workload-api-server` | `airbyte-workload-api-server/` | Workload API server for workload-based job dispatch |
+| `airbyte-workload-launcher` | `airbyte-workload-launcher/` | Launches connector containers for workload execution |
+
+</Accordion>
+
+<Accordion title="API modules">
+
+| Module | Directory | Responsibility |
+|--------|-----------|----------------|
+| `airbyte-api` | `airbyte-api/` | API definitions and generated client/server code |
+| `airbyte-api:server-api` | `airbyte-api/server-api/` | Configuration API spec and generated interfaces |
+| `airbyte-api:public-api` | `airbyte-api/public-api/` | Public API spec |
+| `airbyte-api:workload-api` | `airbyte-api/workload-api/` | Workload API spec |
+| `airbyte-api:problems-api` | `airbyte-api/problems-api/` | Problem detail types for error responses |
+
+</Accordion>
+
+<Accordion title="Data and persistence modules">
+
+| Module | Directory | Responsibility |
+|--------|-----------|----------------|
+| `airbyte-config:config-models` | `airbyte-config/config-models/` | Configuration domain models |
+| `airbyte-config:config-persistence` | `airbyte-config/config-persistence/` | Database access for configuration data |
+| `airbyte-data` | `airbyte-data/` | Higher-level data access layer |
+| `airbyte-db:db-lib` | `airbyte-db/db-lib/` | Database utilities |
+| `airbyte-db:jooq` | `airbyte-db/jooq/` | jOOQ-generated classes |
+| `airbyte-persistence:job-persistence` | `airbyte-persistence/job-persistence/` | Job and attempt storage |
+
+</Accordion>
+
+<Accordion title="Infrastructure modules">
+
+| Module | Directory | Responsibility |
+|--------|-----------|----------------|
+| `airbyte-commons` | `airbyte-commons/` | Shared utilities used across all modules |
+| `airbyte-commons-temporal` | `airbyte-commons-temporal/` | Temporal workflow and activity base classes |
+| `airbyte-commons-worker` | `airbyte-commons-worker/` | Worker-specific shared logic |
+| `airbyte-commons-micronaut` | `airbyte-commons-micronaut/` | Micronaut configuration base classes |
+| `airbyte-featureflag` | `airbyte-featureflag/` | Feature flag client |
+| `airbyte-metrics:metrics-lib` | `airbyte-metrics/metrics-lib/` | Metrics emission utilities |
+| `airbyte-notification` | `airbyte-notification/` | Notification delivery (email, Slack, webhook) |
+
+</Accordion>
+
+## How the server works
+
+The `airbyte-server` module runs the Configuration API. The entry point is `ServerApp.java`. The main API implementation class is `ConfigurationApi`, which delegates every endpoint to a dedicated handler class:
+
+```
+ConfigurationApi
+  └── WorkspaceHandler      # workspace/get, workspace/create, …
+  └── ConnectionHandler     # connection/create, connection/update, …
+  └── SourceHandler         # source/create, source/check_connection, …
+  └── DestinationHandler    # destination/create, …
+  └── JobHandler            # jobs/get, jobs/list, …
+```
+
+Unit tests are written at the **handler** level, not at the `ConfigurationApi` level. This keeps tests scoped to individual resources.
+
+## Adding a new API endpoint
+
+<Steps>
+  <Step title="Define the endpoint in the OpenAPI spec">
+    API endpoints are defined in OpenAPI YAML files under `airbyte-api/server-api/src/main/openapi/`. Add your path, parameters, request body, and response schemas there.
+  </Step>
+  <Step title="Generate the server interfaces">
+    Run the OpenAPI generator to produce the Kotlin/Java server interfaces and models:
+
+    ```bash
+    ./gradlew :oss:airbyte-api:server-api:generateApiServer
+    ```
+  </Step>
+  <Step title="Implement the handler">
+    Create or update a handler class in `airbyte-commons-server/src/main/kotlin/io/airbyte/commons/server/handlers/`. Handler classes receive the request, call service-layer code, and return a response object:
+
+    ```kotlin
+    @Singleton
+    class WorkspaceHandler(
+      private val workspaceRepository: WorkspaceRepository,
+      private val uuidGenerator: Supplier<UUID>,
+    ) {
+      fun createWorkspace(workspaceCreate: WorkspaceCreate): WorkspaceRead {
+        val workspaceId = uuidGenerator.get()
+        val workspace = workspaceRepository.create(
+          Workspace(
+            workspaceId = workspaceId,
+            name = workspaceCreate.name,
+            email = workspaceCreate.email,
+          )
+        )
+        return WorkspaceRead(workspaceId = workspace.workspaceId, name = workspace.name)
+      }
+    }
+    ```
+  </Step>
+  <Step title="Wire the handler in ConfigurationApi">
+    Inject your handler into `ConfigurationApi` and delegate the generated interface method to it.
+  </Step>
+  <Step title="Write unit tests">
+    Add a test class in `airbyte-commons-server/src/test/kotlin/` that exercises the handler directly, mocking its dependencies with Mockito:
+
+    ```kotlin
+    class WorkspaceHandlerTest {
+      private val workspaceRepository = mock(WorkspaceRepository::class.java)
+      private val uuidGenerator = Supplier { UUID.fromString("a-fixed-uuid") }
+      private val handler = WorkspaceHandler(workspaceRepository, uuidGenerator)
+
+      @Test
+      fun `createWorkspace returns populated WorkspaceRead`() {
+        // arrange …
+        // act …
+        // assert …
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Database migrations
+
+Airbyte uses **Flyway** for schema migrations. Migration files live in:
+
+```
+airbyte-db/db-lib/src/main/resources/io/airbyte/db/instance/
+  configs/migrations/   # configuration database migrations
+  jobs/migrations/      # jobs database migrations
+```
+
+Migration file names follow the pattern `V<version>__<description>.sql`. For example:
+
+```
+V0_50_33_014__AddConnectionTagTable.sql
+```
+
+When adding a migration:
+
+1. Create a new SQL file with the next version number.
+2. Write your schema change in pure SQL.
+3. Run the bootloader locally to verify the migration applies cleanly:
+
+```bash
+./gradlew :oss:airbyte-bootloader:run
+```
+
+<Warning>
+  Never modify existing migration files that have already been merged. Flyway tracks applied migrations by checksum; changing a migration that is already recorded will cause startup failures.
+</Warning>
+
+## Testing
+
+### Unit tests
+
+Unit tests use **JUnit 5** and **Mockito**. Run them with:
+
+```bash
+./gradlew :oss:airbyte-commons-server:test
+./gradlew :oss:airbyte-server:test
+```
+
+Test classes live alongside their source in `src/test/kotlin/` or `src/test/java/`.
+
+### Integration tests
+
+Integration tests spin up Docker containers (typically PostgreSQL) and run against a real database. Run them with:
+
+```bash
+./gradlew integrationTest
+```
+
+Or for a specific module:
+
+```bash
+./gradlew :oss:airbyte-persistence:job-persistence:integrationTest
+```
+
+### Archiving test reports
+
+To collect all test reports across all modules into a single archive:
+
+```bash
+./gradlew archiveReports
+```
+
+Reports are written to `build/dist/<project-name>-reports.tar`.
+
+## Code style
+
+### ktlint
+
+Kotlin code is formatted with **ktlint**. The Gradle plugin checks formatting as part of the build. To auto-format:
+
+```bash
+./gradlew format
+```
+
+### PMD
+
+**PMD** static analysis runs against Java and Kotlin code. Rules are defined in `oss/pmd-rules.xml`. PMD runs automatically during `./gradlew build`.
+
+PMD reports are included in the test report archive produced by `./gradlew archiveReports`.
+
+## Running the server locally
+
+After building the project, you can start just the server module:
+
+```bash
+./gradlew :oss:airbyte-server:run
+```
+
+For a full-stack local environment including the database, temporal, and workers, use Docker Compose from the repository root:
+
+```bash
+make dev.up.oss
+```
+
+This starts all required services and exposes the API at `http://localhost:8001` and the UI at `http://localhost:8000`.

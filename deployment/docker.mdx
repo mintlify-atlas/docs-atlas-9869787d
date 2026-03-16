@@ -1,0 +1,151 @@
+---
+title: "Docker deployment"
+description: "Deploy Airbyte locally using Docker Compose."
+keywords: ["docker", "docker compose", "local deployment", "self-hosted"]
+---
+
+This guide walks you through running Airbyte on your local machine or a single server using Docker Compose. Docker is the fastest way to get Airbyte running for development and small-scale production use.
+
+## Prerequisites
+
+- **Docker** 20.10 or later
+- **Docker Compose** 1.29 or later (or the `docker compose` plugin bundled with Docker Desktop)
+- At least **4 GB of RAM** allocated to Docker
+- **Git** to clone the repository
+
+<Tip>On macOS and Windows, open **Docker Desktop → Settings → Resources** and set memory to at least 4 GB before starting.</Tip>
+
+## Step-by-step installation
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone the Airbyte repository and navigate to it:
+
+    ```bash
+    git clone https://github.com/airbytehq/airbyte.git
+    cd airbyte
+    ```
+  </Step>
+
+  <Step title="Configure environment variables">
+    Copy the example environment file and edit it:
+
+    ```bash
+    cp .env.example .env
+    ```
+
+    Open `.env` in your editor. The most important variables are:
+
+    | Variable | Default | Description |
+    |---|---|---|
+    | `BASIC_AUTH_USERNAME` | `airbyte` | Username for the web UI |
+    | `BASIC_AUTH_PASSWORD` | `password` | Password for the web UI |
+    | `DATABASE_USER` | `docker` | PostgreSQL user |
+    | `DATABASE_PASSWORD` | `docker` | PostgreSQL password |
+    | `DATABASE_HOST` | `db` | PostgreSQL host |
+    | `DATABASE_PORT` | `5432` | PostgreSQL port |
+    | `DATABASE_DB` | `airbyte` | PostgreSQL database name |
+
+    <Warning>Change `BASIC_AUTH_USERNAME` and `BASIC_AUTH_PASSWORD` before exposing Airbyte to any network. The defaults are insecure.</Warning>
+  </Step>
+
+  <Step title="Start Airbyte">
+    Start all services in the background:
+
+    ```bash
+    docker compose up -d
+    ```
+
+    The first run pulls Docker images and may take a few minutes. You can follow the startup logs:
+
+    ```bash
+    docker compose logs -f
+    ```
+
+    Wait until you see log lines confirming the server is listening:
+
+    ```
+    airbyte-server  | ... Micronaut application started
+    ```
+  </Step>
+
+  <Step title="Open the web UI">
+    Navigate to [http://localhost:8000](http://localhost:8000) in your browser.
+
+    Sign in with the credentials you set in `.env` (`BASIC_AUTH_USERNAME` and `BASIC_AUTH_PASSWORD`). On first launch, Airbyte runs the bootloader to apply database migrations automatically before the server starts.
+  </Step>
+</Steps>
+
+## Default credentials
+
+By default, the web UI uses HTTP basic auth:
+
+- **Username**: `airbyte`
+- **Password**: `password`
+
+To change them, update `BASIC_AUTH_USERNAME` and `BASIC_AUTH_PASSWORD` in your `.env` file and restart the stack:
+
+```bash
+docker compose restart
+```
+
+## Stopping and restarting
+
+Stop Airbyte while preserving all data:
+
+```bash
+docker compose down
+```
+
+Stop and **delete all data** (volumes):
+
+```bash
+docker compose down -v
+```
+
+<Warning>Running `docker compose down -v` permanently deletes your database and storage volumes. All connections, sources, and destinations will be lost.</Warning>
+
+Restart after stopping:
+
+```bash
+docker compose up -d
+```
+
+## Services overview
+
+The Docker Compose stack starts the following containers:
+
+| Service | Image | Port | Description |
+|---|---|---|---|
+| `airbyte-server` | `airbyte/server` | `8000` | API and web server (Micronaut, port `8000` internally `8085`) |
+| `airbyte-webapp` | `airbyte/webapp` | `8080` | nginx serving the React SPA |
+| `airbyte-worker` | `airbyte/worker` | — | Runs sync and check operations |
+| `airbyte-bootloader` | `airbyte/bootloader` | — | Applies database migrations on startup |
+| `db` | `postgres` | `5432` | Internal PostgreSQL database |
+| `airbyte-temporal` | `temporalio/auto-setup` | `7233` | Workflow orchestration |
+| `minio` | `minio/minio` | `9000` | Object storage for logs and state |
+
+## Connecting to an external database
+
+To use your own PostgreSQL instance instead of the bundled container, set these variables in `.env`:
+
+```bash
+DATABASE_HOST=your-pg-host
+DATABASE_PORT=5432
+DATABASE_DB=airbyte
+DATABASE_USER=airbyte
+DATABASE_PASSWORD=your-password
+```
+
+Then remove the `db` service from your `docker-compose.yaml` before starting.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Kubernetes deployment" icon="dharmachakra" href="/deployment/kubernetes">
+    Run Airbyte on Kubernetes for production workloads.
+  </Card>
+  <Card title="Configuration reference" icon="sliders" href="/deployment/configuration">
+    Full list of environment variables.
+  </Card>
+</CardGroup>

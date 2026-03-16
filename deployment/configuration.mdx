@@ -1,0 +1,163 @@
+---
+title: "Configuration reference"
+description: "Environment variables and configuration options for the Airbyte platform."
+keywords: ["configuration", "environment variables", "env vars", "settings"]
+---
+
+Airbyte services are configured through environment variables. In Kubernetes deployments, the Helm chart renders these into a `ConfigMap` named `<release>-airbyte-env` and a `Secret` named `<release>-airbyte-secrets`. In Docker Compose deployments, they come from your `.env` file.
+
+## Core platform variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `AIRBYTE_VERSION` | chart `appVersion` | Version string embedded in API responses and metrics. |
+| `AIRBYTE_EDITION` | `community` | `community` or `enterprise`. Enables Enterprise-only features. |
+| `AIRBYTE_CLUSTER_TYPE` | `hybrid` | `control-plane`, `data-plane`, or `hybrid`. |
+| `AIRBYTE_URL` | `http://localhost:8080` | Public URL at which Airbyte is reachable. Must match your Ingress host. |
+| `API_AUTHORIZATION_ENABLED` | `true` | Whether bearer-token auth is enforced on the API. |
+| `INTERNAL_API_HOST` | derived | Internal URL for service-to-service calls to the server. |
+| `AIRBYTE_SERVER_HOST` | derived | Host and port of the server service (e.g. `airbyte-server-svc.airbyte:8001`). |
+| `DEPLOYMENT_ENV` | — | Label passed to telemetry and error reporting (e.g. `prod`). |
+
+## Database configuration
+
+Airbyte requires a PostgreSQL 13+ database. The bootloader runs Flyway migrations on startup.
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_HOST` | `airbyte-db-svc.<namespace>.svc.cluster.local` | PostgreSQL hostname. |
+| `DATABASE_PORT` | `5432` | PostgreSQL port. |
+| `DATABASE_DB` | `db-airbyte` | Database name. |
+| `DATABASE_URL` | derived | Full JDBC URL, e.g. `jdbc:postgresql://host:5432/db-airbyte`. |
+| `DATABASE_USER` | `airbyte` | Database user. Stored in the Kubernetes Secret. |
+| `DATABASE_PASSWORD` | `airbyte` | Database password. Stored in the Kubernetes Secret. |
+| `CONFIG_DATABASE_REPLICA_URL` | falls back to `DATABASE_URL` | JDBC URL for a read-replica if you have one. |
+| `CONFIG_DATABASE_REPLICA_USER` | falls back to `DATABASE_USER` | Read-replica user. |
+| `CONFIG_DATABASE_REPLICA_PASSWORD` | falls back to `DATABASE_PASSWORD` | Read-replica password. |
+| `RUN_DATABASE_MIGRATION_ON_STARTUP` | `true` | Run Flyway migrations before the server accepts traffic. |
+| `CONFIGS_DATABASE_MINIMUM_FLYWAY_MIGRATION_VERSION` | `0.35.15.001` | Minimum config-DB migration version to accept. |
+| `JOBS_DATABASE_MINIMUM_FLYWAY_MIGRATION_VERSION` | `0.29.15.001` | Minimum jobs-DB migration version to accept. |
+
+### External PostgreSQL example
+
+```yaml
+# airbyte-values.yaml
+global:
+  database:
+    type: external
+    secretName: my-db-secret
+    host: my-postgres.rds.amazonaws.com
+    port: 5432
+    name: airbyte
+    userSecretKey: db-user       # key inside my-db-secret
+    passwordSecretKey: db-password
+```
+
+## Storage configuration
+
+Airbyte stores connector logs, sync state, workload output, and activity payloads in object storage. Set `STORAGE_TYPE` to one of `minio`, `s3`, `gcs`, or `azure`.
+
+### Common bucket variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `STORAGE_TYPE` | `minio` | Storage backend: `minio`, `s3`, `gcs`, or `azure`. |
+| `STORAGE_BUCKET_LOG` | `airbyte-bucket` | Bucket for connector logs. |
+| `STORAGE_BUCKET_STATE` | `airbyte-bucket` | Bucket for sync state. |
+| `STORAGE_BUCKET_WORKLOAD_OUTPUT` | `airbyte-bucket` | Bucket for workload output. |
+| `STORAGE_BUCKET_ACTIVITY_PAYLOAD` | `airbyte-bucket` | Bucket for Temporal activity payloads. |
+| `STORAGE_BUCKET_AUDIT_LOGGING` | `airbyte-bucket` | Bucket for audit logs. |
+
+### S3
+
+| Variable | Default | Description |
+|---|---|---|
+| `AWS_DEFAULT_REGION` | — | AWS region, e.g. `us-east-1`. |
+| `AWS_AUTHENTICATION_TYPE` | `credentials` | `credentials` or `instanceProfile`. |
+| `AWS_ACCESS_KEY_ID` | — | AWS access key ID (stored in Secret). |
+| `AWS_SECRET_ACCESS_KEY` | — | AWS secret access key (stored in Secret). |
+
+### GCS
+
+| Variable | Default | Description |
+|---|---|---|
+| `GOOGLE_APPLICATION_CREDENTIALS` | `/secrets/gcp-creds/gcp.json` | Path to the service account key file. |
+| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | — | Base64-encoded service account JSON (stored in Secret). |
+| `GCS_CREDENTIALS_SECRET_NAME` | derived | Name of the Kubernetes Secret containing GCS credentials. |
+
+### Azure Blob Storage
+
+| Variable | Default | Description |
+|---|---|---|
+| `AZURE_STORAGE_CONNECTION_STRING` | — | Azure storage connection string (stored in Secret). |
+
+### MinIO (default)
+
+| Variable | Default | Description |
+|---|---|---|
+| `MINIO_ENDPOINT` | `http://airbyte-minio-svc.<namespace>:9000` | MinIO endpoint URL. |
+| `S3_PATH_STYLE_ACCESS` | `true` | Use path-style access (required for MinIO). |
+| `AWS_ACCESS_KEY_ID` | `minio` | MinIO access key (stored in Secret). |
+| `AWS_SECRET_ACCESS_KEY` | `minio123` | MinIO secret key (stored in Secret). |
+
+## Auth configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `API_AUTHORIZATION_ENABLED` | `true` | Enforce bearer-token authorization on the API. |
+| `AB_INSTANCE_ADMIN_PASSWORD` | — | Initial admin password (stored in Secret). |
+| `AB_INSTANCE_ADMIN_CLIENT_ID` | — | OAuth client ID for the instance admin (stored in Secret). |
+| `AB_INSTANCE_ADMIN_CLIENT_SECRET` | — | OAuth client secret for the instance admin (stored in Secret). |
+
+## Secrets manager configuration
+
+Airbyte can delegate connector credential storage to an external secrets manager instead of keeping them in the database.
+
+| Variable | Default | Description |
+|---|---|---|
+| `SECRET_PERSISTENCE` | — | `VAULT`, `GOOGLE_SECRET_MANAGER`, `AWS_SECRET_MANAGER`, `AZURE_KEY_VAULT`, or `TESTING_CONFIG_DB_TABLE`. |
+
+## Metrics configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `MICROMETER_METRICS_ENABLED` | `false` | Enable Micrometer metric collection. |
+| `MICROMETER_METRICS_STEP` | `PT1M` | Publication interval as an ISO 8601 duration. |
+| `MICROMETER_METRICS_STATSD_ENABLED` | `false` | Publish metrics via StatsD. |
+| `MICROMETER_METRICS_STATSD_FLAVOR` | `datadog` | StatsD flavor: `datadog` or `influxdb`. |
+| `STATSD_HOST` | host IP | StatsD agent host. Defaults to the node's IP via the Kubernetes downward API. |
+| `STATSD_PORT` | `8125` | StatsD agent port. |
+| `MICROMETER_METRICS_OTLP_ENABLED` | `false` | Publish metrics via OTLP. |
+| `OTEL_COLLECTOR_ENDPOINT` | — | OTLP collector endpoint, e.g. `http://otel-collector:4317`. |
+| `PUBLISH_METRICS` | `true` | Internal toggle for the metrics reporter service. |
+
+## Logging configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `LOG_LEVEL` | `INFO` | Log level for all services: `DEBUG`, `INFO`, `WARN`, `ERROR`. |
+| `HTTP_ACCESS_LOGS_ENABLED` | `false` | Enable HTTP access logging in the server. |
+| `LOG4J_CONFIGURATION_FILE` | — | Path to a custom Log4j 2 configuration file. |
+
+## Temporal configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `TEMPORAL_HOST` | `airbyte-temporal-svc.<namespace>:7233` | Temporal frontend host and port. |
+| `TEMPORAL_SDK_RPC_TIMEOUT` | `120s` | RPC timeout for Temporal SDK calls. |
+| `TEMPORAL_SDK_RPC_LONG_POLL_TIMEOUT` | `140s` | Long-poll timeout. |
+| `TEMPORAL_SDK_RPC_QUERY_TIMEOUT` | `20s` | Query timeout. |
+
+## Workload configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `WORKLOADS_NAMESPACE` | `jobs` | Kubernetes namespace where connector pods run. |
+| `WORKLOAD_LAUNCHER_PARALLELISM` | — | Maximum concurrent workload launches. |
+
+## API configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `AIRBYTE_API_HOST` | derived | Public base URL for the Airbyte API, e.g. `https://airbyte.example.com/api/public`. |
+| `MANIFEST_SERVER_API_HOST` | derived | Internal URL for the manifest server. |

@@ -1,0 +1,79 @@
+---
+title: "Building connectors"
+description: "Choose the right approach to build a custom Airbyte connector for any source or destination."
+keywords: ["connector development", "CDK", "connector builder", "low-code", "python", "custom connector"]
+---
+
+If the connector you need is not in the Airbyte catalog, you can build one. Airbyte provides three development paths, ranging from no-code to full Python, so you can match the approach to your team's skills and the complexity of the API or database you are connecting to.
+
+## The Airbyte protocol
+
+Every connector you build — regardless of the approach — must implement the four operations of the Airbyte protocol:
+
+| Operation | Description |
+|---|---|
+| `spec` | Return the connector's configuration schema as JSON Schema. |
+| `check` | Validate that the supplied configuration connects successfully. |
+| `discover` | Return the list of streams (tables or endpoints) the connector exposes, with each stream's JSON schema. |
+| `read` / `write` | For sources: emit records. For destinations: receive and load records. |
+
+All connectors run as Docker containers. The Airbyte platform launches the container with the appropriate command (`spec`, `check`, `discover`, or `read`), reads newline-delimited JSON messages from stdout, and writes input to stdin.
+
+## Choose a development path
+
+<CardGroup cols={3}>
+  <Card title="Connector Builder" icon="hammer" href="/connectors/building/connector-builder">
+    **Best for:** REST APIs with standard auth and pagination.
+
+    A no-code UI in the Airbyte web app. Define your API URL, authentication method, pagination strategy, and streams in a form. Test responses in real time. Publish directly to your workspace with no local tooling required.
+  </Card>
+  <Card title="Low-code CDK" icon="code" href="/connectors/building/low-code-cdk">
+    **Best for:** REST APIs that need custom logic or are too complex for the Builder UI.
+
+    Write a YAML manifest that the Connector Development Kit (CDK) interprets at runtime. You get full control over request construction, record extraction, pagination, and authentication without writing Python.
+  </Card>
+  <Card title="Python CDK" icon="python" href="/connectors/building/python-cdk">
+    **Best for:** Non-REST sources, complex transformations, or any destination.
+
+    Write a Python connector by subclassing `AbstractSource` or `AbstractDestination`. Full control over every aspect of data reading and writing. Required for databases, streaming sources, and all destination connectors.
+  </Card>
+</CardGroup>
+
+## Decision guide
+
+<AccordionGroup>
+  <Accordion title="Use Connector Builder when...">
+    - The source is a REST API with JSON responses
+    - Authentication is API key, Bearer token, Basic auth, or OAuth 2.0
+    - Pagination is page-based, offset-based, or cursor-based
+    - You want to iterate quickly without any local setup
+    - You do not need custom Python transformation logic
+  </Accordion>
+
+  <Accordion title="Use the Low-code CDK when...">
+    - The API is too complex to model in the Builder UI
+    - You need to commit the connector definition to version control
+    - You want to use CDK features like substreams, partition routers, or custom requesters
+    - You prefer YAML over Python
+  </Accordion>
+
+  <Accordion title="Use the Python CDK when...">
+    - The source is not a REST API (database, file, queue, GraphQL)
+    - You need to build a destination connector
+    - The data transformation or business logic is complex enough to require Python
+    - You need full control over retry logic, rate limiting, or state management
+  </Accordion>
+</AccordionGroup>
+
+## CDK version
+
+The current CDK version is **7.10.0**. The CDK is released independently of the Airbyte platform. Pin the CDK version in your connector's requirements to ensure reproducible builds.
+
+## Testing connectors
+
+Regardless of the development path you choose, test your connector with the Standard Acceptance Test suite (SAT) before publishing. SAT runs a set of scenario-based tests against a live or mocked source to verify that your connector correctly implements the Airbyte protocol.
+
+```bash
+# Run acceptance tests from your connector directory
+python -m pytest integration_tests/ -v
+```

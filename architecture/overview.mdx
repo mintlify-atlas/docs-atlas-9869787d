@@ -1,0 +1,101 @@
+---
+title: "Architecture overview"
+description: "How Airbyte's services are organized and how they communicate."
+---
+
+Airbyte is a multi-service platform. Each service has a clearly defined responsibility, and services communicate over well-defined APIs. This page gives you a high-level map of those services and how they fit together.
+
+## Control plane vs. data plane
+
+Airbyte's architecture is split into two logical planes:
+
+<CardGroup cols={2}>
+  <Card title="Control plane" icon="sliders">
+    Manages configuration and orchestration. Hosts the REST API server, web UI, scheduler, and the PostgreSQL configuration database. Responsible for deciding *what* to run and *when*.
+  </Card>
+  <Card title="Data plane" icon="arrow-right-arrow-left">
+    Executes connector workloads. Hosts the workload launcher and the connector pod runtime. Responsible for *actually moving data* between sources and destinations. Can be deployed separately from the control plane for security isolation.
+  </Card>
+</CardGroup>
+
+In a standard Docker Compose deployment both planes run on the same host. In production Kubernetes deployments, the data plane is typically deployed in a separate cluster or namespace, with the workload launcher polling the control plane's Workload API for jobs to execute.
+
+## Service map
+
+<CardGroup cols={2}>
+  <Card title="airbyte-webapp" icon="display">
+    React + TypeScript single-page application. Served at port **8000**. Communicates exclusively with `airbyte-server` over the internal API.
+  </Card>
+  <Card title="airbyte-server" icon="server">
+    Kotlin/Micronaut REST API server. Implements the Airbyte Configuration API. Handles all CRUD operations for workspaces, sources, destinations, and connections. Exposes the Workload API consumed by the launcher.
+  </Card>
+  <Card title="airbyte-workers" icon="gear">
+    Temporal activity workers. Execute connector commands (Check, Discover, Replication, Spec) by submitting workloads to the Workload API and polling for results.
+  </Card>
+  <Card title="Temporal" icon="clock">
+    Workflow orchestration engine. Schedules and retries Temporal workflows that drive sync jobs. Provides durability guarantees so in-flight jobs survive restarts.
+  </Card>
+  <Card title="airbyte-bootloader" icon="rocket">
+    One-shot initialization service. Runs at startup to migrate the PostgreSQL schema to the current version and seed required baseline data.
+  </Card>
+  <Card title="airbyte-workload-launcher" icon="play">
+    Polls the Workload API for pending workloads and launches connector pods on Kubernetes. Runs in the data plane.
+  </Card>
+  <Card title="airbyte-cron" icon="calendar">
+    Scheduled background task runner. Handles housekeeping jobs such as workload heartbeat monitoring, declarative source updates, and database pruning.
+  </Card>
+  <Card title="PostgreSQL" icon="database">
+    Persistent configuration and job state store. Airbyte uses a single PostgreSQL database for both platform configuration (workspaces, connections) and job execution records.
+  </Card>
+</CardGroup>
+
+## Communication flow
+
+The following diagram shows the request path for a typical sync:
+
+```
+User
+  │  HTTPS / WebSocket
+  ▼
+airbyte-webapp (port 8000)
+  │  REST
+  ▼
+airbyte-server  ◄──────────────────────── PostgreSQL
+  │  Schedules workflow
+  ▼
+Temporal server
+  │  Dispatches activity tasks
+  ▼
+airbyte-workers  (Temporal activity worker)
+  │  Creates workload via Workload API
+  ▼
+Workload API (inside airbyte-server)
+  │  Workload record written to PostgreSQL
+  ▼
+airbyte-workload-launcher  (polls Workload API)
+  │  Launches Kubernetes pod
+  ▼
+Connector pod  (source or destination Docker image)
+  │  Streams records
+  ▼
+Destination connector pod
+```
+
+## Deployment topologies
+
+<Tabs>
+  <Tab title="Docker Compose (local)">
+    All services run as Docker containers on a single host. Docker Compose manages networking via a shared internal bridge network. The bootloader runs as a short-lived container before the server starts.
+
+    ```bash
+    docker compose up -d
+    ```
+
+    Suitable for development, testing, and small-scale production workloads.
+  </Tab>
+  <Tab title="Kubernetes (production)">
+    Each service deploys as a Kubernetes Deployment or StatefulSet. The workload launcher runs in the data plane and launches connector jobs as ephemeral Pods. Temporal is deployed as a separate StatefulSet with its own PostgreSQL backend.
+
+    Kubernetes is the recommended topology for production. It enables independent scaling of the control plane and data plane, multi-tenant data isolation, and resource quotas per connector pod.
+  </Tab>
+</Tabs>

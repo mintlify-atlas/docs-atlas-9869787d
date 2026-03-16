@@ -1,0 +1,156 @@
+---
+title: "Local development setup"
+description: "Set up a local Airbyte development environment to build and test changes."
+---
+
+This guide walks you through cloning the Airbyte repository, installing dependencies, and running the platform locally.
+
+## Prerequisites
+
+Install the following tools before you begin:
+
+| Tool | Minimum version | Notes |
+|------|----------------|-------|
+| JDK | 21 | OpenJDK or any compatible distribution |
+| Node.js | 20.19.0 | Matches the version pinned in `airbyte-webapp/package.json` |
+| pnpm | 8.6.12 | Frontend package manager |
+| Docker | Latest stable | Required to build and run connector images |
+| Python | 3.10+ | Required for connector development with the Python CDK |
+| Gradle | Bundled (use `./gradlew`) | The repository includes a Gradle wrapper — no separate installation needed |
+
+<Tip>
+  Use a version manager like [sdkman](https://sdkman.io/) for Java, [nvm](https://github.com/nvm-sh/nvm) or [volta](https://volta.sh/) for Node.js, and [pyenv](https://github.com/pyenv/pyenv) for Python. The webapp's `package.json` includes a Volta configuration that pins the exact Node.js and pnpm versions automatically.
+</Tip>
+
+## Clone the repository
+
+```bash
+git clone https://github.com/airbytehq/airbyte.git
+cd airbyte
+```
+
+If you have forked the repository, clone your fork instead:
+
+```bash
+git clone https://github.com/<your-username>/airbyte.git
+cd airbyte
+git remote add upstream https://github.com/airbytehq/airbyte.git
+```
+
+## Configure Gradle
+
+The Gradle build configuration lives in `build.gradle.kts` and `settings.gradle.kts` at the root of the repository. The project uses the `airbyte-oss` root project name.
+
+Gradle properties are configured in `gradle.properties`. Key settings:
+
+```properties
+org.gradle.parallel=true
+org.gradle.jvmargs=-Xmx8g -Xss4m
+org.gradle.caching=true
+org.gradle.vfs.watch=true
+```
+
+You can override these for your local environment by adding entries to `~/.gradle/gradle.properties`.
+
+## Build the project
+
+Run a full build from the repository root:
+
+```bash
+./gradlew build
+```
+
+To build without running tests:
+
+```bash
+./gradlew assemble
+```
+
+To build a specific module:
+
+```bash
+./gradlew :oss:airbyte-server:build
+./gradlew :oss:airbyte-workers:build
+./gradlew :oss:airbyte-webapp:build
+```
+
+## Run tests
+
+Run all tests across the project:
+
+```bash
+./gradlew test
+```
+
+Run tests for a single module:
+
+```bash
+./gradlew :oss:airbyte-server:test
+./gradlew :oss:airbyte-commons-server:test
+```
+
+Run integration tests (requires Docker):
+
+```bash
+./gradlew integrationTest
+```
+
+## Running individual services
+
+For most development workflows, you can start a full local stack using Docker Compose or `make`:
+
+```bash
+# Build and start the OSS stack
+make build.oss deploy.oss
+
+# Or start the development environment directly
+make dev.up.oss
+```
+
+To run only the backend API server (after a full build):
+
+```bash
+./gradlew :oss:airbyte-server:run
+```
+
+## Frontend development
+
+The frontend is a separate development workflow. Install dependencies and start the dev server:
+
+```bash
+cd airbyte-webapp
+pnpm install
+pnpm start
+```
+
+By default, `pnpm start` proxies API calls to a backend running at `http://localhost:8001`. You need a running backend (via Docker Compose) for the full UI to function.
+
+See the [Frontend development](/contributing/frontend) guide for more detail on the webapp structure and workflow.
+
+## Environment variables
+
+The local development environment reads configuration from environment variables. For Docker Compose-based setups, these are set in `.env` files at the repository root. Common variables:
+
+| Variable | Description |
+|----------|-------------|
+| `AIRBYTE_ROLE` | Deployment role (`dev`, `oss`, `cloud`) |
+| `AIRBYTE_VERSION` | Platform version string |
+| `DATABASE_URL` | JDBC URL for the Airbyte config database |
+| `DATABASE_USER` | Config database username |
+| `DATABASE_PASSWORD` | Config database password |
+| `WORKSPACE_ROOT` | Path for workspace storage (local file artifacts) |
+| `CONFIG_ROOT` | Path for configuration storage |
+
+<Note>
+  In CI, some Gradle and environment settings are overridden. When running `./gradlew` with `-DciMode=true`, the build suppresses deprecation warnings and redirects output to `gradle.log`.
+</Note>
+
+## Verifying your setup
+
+After the backend is running, you can verify the API is responding:
+
+```bash
+curl http://localhost:8001/api/v1/health
+```
+
+And open the web UI at `http://localhost:8000` in your browser.

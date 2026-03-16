@@ -1,0 +1,72 @@
+---
+title: "Security"
+description: "How to responsibly report security vulnerabilities in Airbyte."
+---
+
+Airbyte takes security seriously. If you believe you have found a vulnerability, please follow the responsible disclosure process described here rather than opening a public issue.
+
+<Warning>
+  **Do not file GitHub issues or post on public forums for security vulnerabilities.** GitHub issues and Discourse posts are public — disclosing a vulnerability there exposes all Airbyte users to risk before a fix is available.
+</Warning>
+
+## How to report a vulnerability
+
+Send an email to [security@airbyte.io](mailto:security@airbyte.io) with details about the issue. The security team reviews all reports and will respond as quickly as possible.
+
+This address is for **undisclosed vulnerabilities only**. For questions about security features, deployment hardening, or previously disclosed issues, use the normal community channels: [Slack](https://slack.airbyte.io) or [Discourse](https://discuss.airbyte.io/).
+
+## What to include in your report
+
+A useful security report includes:
+
+- **Description** — What is the vulnerability? What component or endpoint is affected?
+- **Reproduction steps** — Step-by-step instructions or a minimal proof of concept that demonstrates the issue.
+- **Impact** — What can an attacker do if this vulnerability is exploited? Which data or systems are at risk?
+- **Suggested fix** (optional) — If you have an idea for how to address the issue, include it.
+- **Your environment** — Airbyte version, deployment method (Docker, Kubernetes, Airbyte Cloud), and relevant configuration details.
+
+<Note>
+  You do not need to have a complete proof of concept to report a vulnerability. A clear description of the potential issue and affected surface area is sufficient to start a conversation.
+</Note>
+
+## Response timeline
+
+| Stage | Target timeframe |
+|-------|------------------|
+| Initial acknowledgment | Within 2 business days |
+| Vulnerability assessment | Within 5 business days |
+| Status update | Every 7 days until resolved |
+| Fix and disclosure | Coordinated with the reporter |
+
+Timelines may vary depending on the severity and complexity of the issue.
+
+## Responsible disclosure policy
+
+Airbyte asks that you:
+
+1. **Report privately first** — Give the team a reasonable amount of time to investigate and release a fix before any public disclosure.
+2. **Avoid accessing user data** — Do not access, modify, or delete data belonging to other users during your research.
+3. **Avoid denial of service** — Do not send large volumes of requests or otherwise degrade service availability.
+4. **Act in good faith** — Research should be conducted with the intent of improving security for users, not for personal gain or to cause harm.
+
+In return, Airbyte will:
+
+- Acknowledge your report promptly.
+- Work with you to understand and validate the issue.
+- Keep you informed of progress toward a fix.
+- Credit you in the release notes (if you wish) when the vulnerability is disclosed.
+
+## Scope
+
+The responsible disclosure policy applies to the following:
+
+- **Airbyte Cloud** — [cloud.airbyte.com](https://cloud.airbyte.com)
+- **Airbyte OSS** — The open-source platform at [github.com/airbytehq/airbyte](https://github.com/airbytehq/airbyte)
+- **Airbyte connectors** — Sources and destinations in the connectors directory
+
+Third-party dependencies and infrastructure not directly controlled by Airbyte are out of scope. Report those issues to the appropriate upstream project.
+
+## Security resources
+
+- [Airbyte security policy on GitHub](https://github.com/airbytehq/airbyte/security/policy)
+- Email: [security@airbyte.io](mailto:security@airbyte.io)

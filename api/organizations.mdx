@@ -1,0 +1,134 @@
+---
+title: "Organizations API"
+description: "View and manage organizations, which contain workspaces and govern billing and user access."
+---
+
+An organization is the top-level account entity in Airbyte. It contains one or more workspaces and manages billing, user membership, and organization-wide permissions.
+
+## Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/organizations` | List organizations for the authenticated user |
+| `PUT` | `/v1/organizations/{organizationId}/oauthCredentials` | Create or update organization-level OAuth credentials |
+| `DELETE` | `/v1/organizations/{organizationId}/oauthCredentials/{actorType}/{name}` | Delete organization-level OAuth credentials |
+
+---
+
+## List organizations
+
+<CodeGroup>
+```bash curl
+curl https://api.airbyte.com/v1/organizations \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+`GET /v1/organizations`
+
+Returns all organizations the authenticated user belongs to.
+
+### Response
+
+<ResponseField name="data" type="array" required>
+  Array of organization objects.
+  <Expandable title="Organization object">
+    <ResponseField name="organizationId" type="string (UUID)" required>Unique identifier for the organization.</ResponseField>
+    <ResponseField name="organizationName" type="string" required>Display name of the organization.</ResponseField>
+    <ResponseField name="email" type="string (email)" required>Contact email address for the organization.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+```json
+{
+  "data": [
+    {
+      "organizationId": "4a4b6d21-9c3e-4c5b-a1d2-8f0e5d9c2b4a",
+      "organizationName": "Acme Corp",
+      "email": "admin@acme.example.com"
+    }
+  ]
+}
+```
+
+---
+
+## Set organization OAuth credentials
+
+<CodeGroup>
+```bash curl
+curl -X PUT https://api.airbyte.com/v1/organizations/4a4b6d21-9c3e-4c5b-a1d2-8f0e5d9c2b4a/oauthCredentials \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "actorType": "source",
+    "name": "google-ads",
+    "configuration": {
+      "client_id": "<google-ads-client-id>",
+      "client_secret": "<google-ads-client-secret>"
+    }
+  }'
+```
+</CodeGroup>
+
+`PUT /v1/organizations/{organizationId}/oauthCredentials`
+
+Creates or replaces OAuth credentials for a connector at the organization level. These credentials override the default Airbyte-provided credentials for all workspaces in the organization. Refer to the relevant connector's specification for the required credential fields.
+
+### Path parameters
+
+<ParamField path="organizationId" type="string (UUID)" required>
+  ID of the organization.
+</ParamField>
+
+### Request body
+
+<ParamField body="actorType" type="string" required>
+  Whether you are setting credentials for a `source` or `destination`.
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  The connector name these credentials apply to, e.g. `google-ads`.
+</ParamField>
+
+<ParamField body="configuration" type="object" required>
+  The OAuth credential fields required by the connector.
+</ParamField>
+
+### Response
+
+Returns HTTP `200` on success.
+
+---
+
+## Delete organization OAuth credentials
+
+<CodeGroup>
+```bash curl
+curl -X DELETE \
+  "https://api.airbyte.com/v1/organizations/4a4b6d21-9c3e-4c5b-a1d2-8f0e5d9c2b4a/oauthCredentials/source/google-ads" \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+`DELETE /v1/organizations/{organizationId}/oauthCredentials/{actorType}/{name}`
+
+Deletes the organization-level OAuth credential override for the specified connector. After deletion, the connector falls back to Airbyte-provided credentials.
+
+### Path parameters
+
+<ParamField path="organizationId" type="string (UUID)" required>
+  ID of the organization.
+</ParamField>
+
+<ParamField path="actorType" type="string" required>
+  Either `source` or `destination`.
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  The connector name whose credentials you are deleting, e.g. `google-ads`.
+</ParamField>
+
+### Response
+
+Returns HTTP `204 No Content` on success.

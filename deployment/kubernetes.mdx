@@ -1,0 +1,179 @@
+---
+title: "Kubernetes deployment"
+description: "Deploy Airbyte on Kubernetes using the official Helm chart."
+keywords: ["kubernetes", "helm", "k8s", "self-hosted", "production"]
+---
+
+For production deployments, Airbyte runs on Kubernetes using the official Helm chart. This guide covers a standard installation with an internal PostgreSQL database and MinIO object storage, plus options for ingress and persistent storage.
+
+## Prerequisites
+
+- **Kubernetes** 1.21 or later
+- **Helm** 3.x
+- **kubectl** configured to point at your target cluster
+- A **default StorageClass** that can provision `ReadWriteOnce` persistent volumes
+- At least **4 vCPUs** and **8 GB RAM** available in the cluster
+
+<Info>You can verify your kubectl context with `kubectl config current-context` before proceeding.</Info>
+
+## Step-by-step installation
+
+<Steps>
+  <Step title="Add the Airbyte Helm repository">
+    ```bash
+    helm repo add airbyte https://airbytehq.github.io/helm-charts
+    helm repo update
+    ```
+  </Step>
+
+  <Step title="Create a dedicated namespace">
+    ```bash
+    kubectl create namespace airbyte
+    ```
+  </Step>
+
+  <Step title="Create a values override file">
+    Create a file called `airbyte-values.yaml` with your overrides. At minimum, set the URL Airbyte will be reached at:
+
+    ```yaml
+    global:
+      airbyteUrl: "https://airbyte.example.com"
+      edition: community
+
+      auth:
+        enabled: true
+        instanceAdmin:
+          firstName: "Admin"
+          lastName: "User"
+          emailSecretKey: "instance-admin-email"
+          passwordSecretKey: "instance-admin-password"
+
+      database:
+        type: internal  # use "external" to bring your own PostgreSQL
+
+      storage:
+        type: minio  # or s3, gcs, azure
+
+    server:
+      enabled: true
+
+    webapp:
+      enabled: true
+
+    ingress:
+      enabled: true
+      className: nginx
+      hosts:
+        - host: airbyte.example.com
+          paths:
+            - path: /
+              pathType: Prefix
+              backend: server
+    ```
+  </Step>
+
+  <Step title="Create the admin credentials secret">
+    Airbyte reads the initial admin credentials from a Kubernetes secret. Create it before installing the chart:
+
+    ```bash
+    kubectl create secret generic airbyte-config-secrets \
+      --namespace airbyte \
+      --from-literal=instance-admin-email=admin@example.com \
+      --from-literal=instance-admin-password=changeme
+    ```
+
+    <Warning>Replace `changeme` with a strong password before deploying to any shared environment.</Warning>
+  </Step>
+
+  <Step title="Install the chart">
+    ```bash
+    helm install airbyte airbyte/airbyte \
+      --namespace airbyte \
+      --values airbyte-values.yaml
+    ```
+
+    Helm creates the deployments, services, and a pre-install Job that runs the bootloader to apply database migrations.
+  </Step>
+
+  <Step title="Verify the deployment">
+    Wait for all pods to reach `Running` status:
+
+    ```bash
+    kubectl get pods -n airbyte
+    ```
+
+    You should see pods for `server`, `webapp`, `worker`, `temporal`, `db`, and `minio` all running.
+  </Step>
+</Steps>
+
+## Persistent volume requirements
+
+The default chart creates `PersistentVolumeClaim` resources for the bundled services:
+
+| Service | Claim name | Access mode | Size |
+|---|---|---|---|
+| PostgreSQL | `airbyte-db-pvc` | `ReadWriteOnce` | 5 Gi |
+| MinIO | `airbyte-minio-pvc` | `ReadWriteOnce` | 500 Mi |
+
+Your cluster needs a `StorageClass` that can fulfill `ReadWriteOnce` claims. On AWS, use `gp2` or `gp3`. On GKE, the default `standard` class works. On bare metal, consider using local-path-provisioner or NFS.
+
+## Ingress configuration
+
+Airbyte's Helm chart includes a top-level `ingress` block as well as a per-service `webapp.ingress`. To expose both the webapp and API through a single ingress:
+
+```yaml
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+  hosts:
+    - host: airbyte.example.com
+      paths:
+        - path: /api
+          pathType: Prefix
+          backend: server
+        - path: /
+          pathType: Prefix
+          backend: webapp
+  tls:
+    - secretName: airbyte-tls
+      hosts:
+        - airbyte.example.com
+```
+
+For TLS, create or reference a cert-manager `Certificate` resource and set `global.airbyteUrl` to your HTTPS URL.
+
+## Upgrading an existing installation
+
+```bash
+helm repo update
+helm upgrade airbyte airbyte/airbyte \
+  --namespace airbyte \
+  --values airbyte-values.yaml
+```
+
+The bootloader Job runs automatically on upgrade and applies any pending Flyway database migrations before the server starts.
+
+## Uninstalling
+
+```bash
+helm uninstall airbyte --namespace airbyte
+```
+
+This removes all chart-managed resources but leaves behind `PersistentVolumeClaims`. To delete them too:
+
+```bash
+kubectl delete pvc --all -n airbyte
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Helm charts reference" icon="book" href="/deployment/helm-charts">
+    Explore all chart values and sub-charts.
+  </Card>
+  <Card title="Scaling Airbyte" icon="arrow-up-right-dots" href="/deployment/scaling">
+    Tune resources and scale workers.
+  </Card>
+</CardGroup>

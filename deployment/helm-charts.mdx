@@ -1,0 +1,272 @@
+---
+title: "Helm charts"
+description: "Reference for the official Airbyte Helm charts, chart structure, and key configuration sections."
+keywords: ["helm", "helm chart", "values.yaml", "kubernetes", "airbyte"]
+---
+
+Airbyte provides official Helm charts hosted at `https://airbytehq.github.io/helm-charts`. The primary chart, `airbyte`, deploys the full control-plane stack. A separate `airbyte-data-plane` chart is available for multi-tenant deployments where you want to run data-plane workloads independently.
+
+## Charts overview
+
+<CardGroup cols={2}>
+  <Card title="airbyte" icon="server">
+    Deploys the control plane: server, webapp, workers, temporal, Keycloak, and bundled database and object storage.
+  </Card>
+  <Card title="airbyte-data-plane" icon="network-wired">
+    Deploys only the data-plane components (workload launcher, workers) that connect to a remote control plane.
+  </Card>
+</CardGroup>
+
+## Chart structure
+
+The `airbyte` chart at `charts/v2/airbyte/` contains:
+
+```
+airbyte/
+├── Chart.yaml                  # Chart metadata (version 1.1.0, appVersion dev)
+├── values.yaml                 # Default values — override these in your own file
+├── templates/
+│   ├── env-configmap.yaml      # ConfigMap rendered from all config helpers
+│   ├── secret.yaml             # Secret rendered from all secret helpers
+│   ├── ingress.yaml
+│   ├── minio.yaml
+│   ├── airbyte-server/
+│   ├── airbyte-webapp/
+│   ├── airbyte-worker/
+│   ├── airbyte-bootloader/
+│   ├── airbyte-temporal/
+│   ├── airbyte-keycloak/
+│   ├── airbyte-keycloak-setup/
+│   ├── airbyte-workload-api-server/
+│   ├── airbyte-workload-launcher/
+│   ├── airbyte-metrics/
+│   ├── airbyte-cron/
+│   └── config/                 # Helm template helpers (_auth.tpl, _database.tpl, etc.)
+└── config.yaml
+```
+
+## Key configuration sections in values.yaml
+
+### Global settings
+
+All top-level services inherit settings from `global`. This is the most important section to configure.
+
+```yaml
+global:
+  # Edition: "community" (default) or "enterprise"
+  edition: community
+
+  # Cluster deployment mode
+  cluster:
+    type: hybrid  # "control-plane" | "data-plane" | "hybrid"
+
+  # The URL at which Airbyte is reachable (must match your Ingress host)
+  airbyteUrl: "https://airbyte.example.com"
+
+  # Image registry and tag overrides for all airbyte images
+  image:
+    registry: ""
+    tag: ""
+
+  imagePullSecrets: []
+```
+
+### Authentication
+
+```yaml
+global:
+  auth:
+    enabled: true
+
+    instanceAdmin:
+      firstName: ""
+      lastName: ""
+      emailSecretKey: ""      # key inside the secret referenced by secretName
+      passwordSecretKey: ""
+
+    # SSO identity provider (Enterprise only)
+    identityProvider:
+      secretName: ""
+      type: ""   # "oidc" or "generic-oidc"
+
+    security:
+      secretName: ""
+      cookieSecureSetting: true
+      cookieSameSiteSetting: Strict
+      jwtSignatureSecretKey: ""
+```
+
+### Database
+
+```yaml
+global:
+  database:
+    type: internal  # "internal" (bundled PostgreSQL) or "external"
+    secretName: ""  # e.g. "airbyte-config-secrets"
+    host: ""
+    port: 5432       # default
+    name: ""        # database name; default is "db-airbyte"
+    user: ""
+    password: ""
+
+    # Optional read replica
+    replica: {}
+    #  url: "jdbc:postgresql://replica-host:5432/db-airbyte"
+    #  user: ""
+    #  password: ""
+```
+
+The chart translates these values into the environment variables `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_URL`, `DATABASE_USER`, `DATABASE_PASSWORD`, and `DATABASE_DB`.
+
+### Storage
+
+```yaml
+global:
+  storage:
+    type: minio  # default; also "s3", "gcs", "azure"
+    secretName: ""
+
+    bucket:
+      log: airbyte-bucket
+      auditLogging: airbyte-bucket
+      state: airbyte-bucket
+      workloadOutput: airbyte-bucket
+      activityPayload: airbyte-bucket
+
+    # MinIO (default)
+    minio:
+      accessKeyId: minio
+      secretAccessKey: minio123
+
+    # S3 example
+    # s3:
+    #   region: us-east-1
+    #   authenticationType: credentials  # or instanceProfile
+    #   accessKeyId: ""
+    #   secretAccessKey: ""
+
+    # GCS example
+    # gcs:
+    #   projectId: <project-id>
+    #   credentialsJson: <base64-encoded>
+
+    # Azure example
+    # azure:
+    #   connectionString: <connection-string>
+```
+
+### Metrics
+
+```yaml
+global:
+  metrics:
+    enabled: false
+    step: "PT1M"  # publication interval (ISO 8601 duration)
+
+    otlp:
+      enabled: false
+      collectorEndpoint: ""  # e.g. http://otel-collector:4317
+
+    statsd:
+      enabled: false
+      flavor: datadog  # or influxdb
+      host: ""
+      port: 8125
+```
+
+### Secrets manager
+
+```yaml
+global:
+  secretsManager:
+    enabled: false
+    type: ""  # VAULT | GOOGLE_SECRET_MANAGER | AWS_SECRET_MANAGER | AZURE_KEY_VAULT
+
+    # awsSecretManager:
+    #   region: us-east-1
+    #   authenticationType: credentials
+
+    # googleSecretManager:
+    #   projectId: <project-id>
+    #   credentialsSecretKey: gcp.json
+
+    # vault:
+    #   address: ""
+    #   prefix: ""
+    #   authToken: ""
+```
+
+### Worker job resources
+
+```yaml
+global:
+  jobs:
+    resources:
+      requests: {}  # e.g. memory: 256Mi, cpu: 250m
+      limits: {}    # e.g. cpu: 200m, memory: 1Gi
+
+    kube:
+      annotations: {}  # JOB_KUBE_ANNOTATIONS
+      labels: {}       # JOB_KUBE_LABELS
+      nodeSelector: {} # JOB_KUBE_NODE_SELECTORS
+      tolerations: []
+```
+
+### Temporal
+
+```yaml
+global:
+  temporal:
+    cloud:
+      enabled: false
+      host: ""
+      namespace: ""
+      clientCert: ""
+      clientKey: ""
+
+    sdk:
+      rpc:
+        timeout: 120s
+        longPollTimeout: 140s
+        queryTimeout: 20s
+```
+
+## Overriding values
+
+Create a file `my-values.yaml` and pass it to Helm:
+
+```bash
+helm install airbyte airbyte/airbyte \
+  --namespace airbyte \
+  --values my-values.yaml
+```
+
+You can also set individual values inline:
+
+```bash
+helm install airbyte airbyte/airbyte \
+  --namespace airbyte \
+  --set global.airbyteUrl=https://airbyte.example.com \
+  --set global.edition=enterprise
+```
+
+## Available sub-chart components
+
+Each component has its own block in `values.yaml` that lets you enable/disable it and set replica counts, resources, and probes:
+
+| Component | Values key | Default enabled |
+|---|---|---|
+| API / config server | `server` | `true` |
+| Web app | `webapp` | `false` |
+| Worker | `worker` | — |
+| Bootloader | `bootloader` | — |
+| Temporal | `temporal` | — |
+| Keycloak | `keycloak` | — |
+| Workload API server | `workloadApiServer` | — |
+| Workload launcher | `workloadLauncher` | — |
+| Cron | `cron` | — |
+| Metrics reporter | `metrics` | — |
+| MinIO | `minio` | — |
+| PostgreSQL | `postgresql` | — |
+
+<Info>Set `webapp.enabled: true` to include the web UI in the deployment. It is disabled by default so you can run a headless API-only installation.</Info>

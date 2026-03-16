@@ -1,0 +1,93 @@
+---
+title: "Connectors overview"
+description: "Learn what Airbyte connectors are, how they work, and how they are categorized."
+keywords: ["connectors", "sources", "destinations", "airbyte protocol", "docker"]
+---
+
+Connectors are the building blocks of every Airbyte sync. Each connector is a Docker image that implements the Airbyte protocol, giving Airbyte a standard interface to read from any source or write to any destination without needing to know the specifics of each system.
+
+## Sources and destinations
+
+Airbyte connectors fall into two categories:
+
+<CardGroup cols={2}>
+  <Card title="Sources" icon="database" href="/connectors/sources">
+    Read data from an external system — databases, APIs, file storage, SaaS apps, and more. A source connector exposes one or more streams of records.
+  </Card>
+  <Card title="Destinations" icon="warehouse" href="/connectors/destinations">
+    Write data to a target system — data warehouses, lakes, databases, and messaging queues. A destination connector receives record batches and loads them.
+  </Card>
+</CardGroup>
+
+## The Airbyte protocol
+
+Every connector — whether built by Airbyte, a partner, or you — must implement four operations defined by the Airbyte protocol:
+
+<AccordionGroup>
+  <Accordion title="spec">
+    Returns the connector's configuration schema as a JSON Schema object. The platform uses this schema to render the connector's setup form in the UI and to validate user-supplied credentials before any data moves.
+
+    ```json
+    {
+      "connectionSpecification": {
+        "type": "object",
+        "required": ["api_key"],
+        "properties": {
+          "api_key": {
+            "type": "string",
+            "title": "API Key",
+            "airbyte_secret": true
+          }
+        }
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="check">
+    Validates that the supplied configuration can establish a connection to the external system. Returns a success or failure message. This is what runs when you click **Test connection** in the UI.
+  </Accordion>
+
+  <Accordion title="discover">
+    Returns the connector's catalog — the list of streams (tables, endpoints, or topics) the connector can read, along with each stream's JSON schema. The platform uses this to let you select which streams to sync.
+  </Accordion>
+
+  <Accordion title="read / write">
+    For source connectors, `read` fetches records from the external system and emits them as a stream of JSON messages. For destination connectors, the equivalent operation receives those records and loads them into the target system.
+  </Accordion>
+</AccordionGroup>
+
+All communication between connectors and the Airbyte platform uses newline-delimited JSON messages on stdout. The connector sidecar process monitors connector containers, reads their output, validates message format, and reports results back to the platform.
+
+## Connector versioning
+
+Connectors are versioned independently of the Airbyte platform. Each connector version maps to a specific Docker image tag (for example, `airbyte/source-postgres:3.6.4`). When Airbyte publishes a new connector version, you can upgrade at your own pace from the connector's settings page.
+
+Breaking changes — schema changes that could disrupt existing connections — are flagged with a migration guide. Airbyte will pause affected connections automatically until you acknowledge the change and migrate.
+
+## Connector categories
+
+<CardGroup cols={2}>
+  <Card title="Certified connectors" icon="badge-check">
+    Built and maintained by Airbyte. Covered by Airbyte's SLA and support. Tested against a live instance of the source or destination on every release.
+  </Card>
+  <Card title="Community connectors" icon="users">
+    Contributed by the open-source community. Airbyte does not guarantee support or uptime for community connectors.
+  </Card>
+  <Card title="Custom connectors" icon="wrench">
+    Built by your team and published to your workspace only. Full control over the connector code and release cadence.
+  </Card>
+  <Card title="Connector Builder connectors" icon="hammer">
+    Created with the no-code Connector Builder UI and stored as a declarative YAML manifest. Published to and owned by your workspace.
+  </Card>
+</CardGroup>
+
+## Building your own connector
+
+If the connector you need does not exist in the catalog, you can build one. Airbyte offers three development paths depending on your use case:
+
+- **Connector Builder** — no-code UI for REST APIs with standard authentication and pagination patterns
+- **Low-code CDK** — YAML manifest format for more complex REST APIs
+- **Python CDK** — full Python SDK for any source or destination
+
+See [Building connectors](/connectors/building/overview) to get started.

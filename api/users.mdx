@@ -1,0 +1,75 @@
+---
+title: "Users API"
+description: "List and look up users within an organization."
+---
+
+The Users API lets organization admins inspect the members of their organization. You can filter by user ID or email address to look up specific accounts.
+
+## Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/users` | List users within an organization |
+
+---
+
+## List users
+
+<CodeGroup>
+```bash curl
+curl "https://api.airbyte.com/v1/users?organizationId=4a4b6d21-9c3e-4c5b-a1d2-8f0e5d9c2b4a" \
+  -H "Authorization: Bearer <token>"
+```
+</CodeGroup>
+
+`GET /v1/users`
+
+Returns all users in the specified organization. Organization admins can list all users; regular members can only see their own record.
+
+### Query parameters
+
+<ParamField query="organizationId" type="string (UUID)" required>
+  ID of the organization to list users for.
+</ParamField>
+
+<ParamField query="ids" type="array of UUID">
+  Filter by specific user IDs. Returns only users whose IDs match the list.
+</ParamField>
+
+<ParamField query="emails" type="array of email">
+  Filter by specific email addresses. Returns only users whose emails match the list.
+</ParamField>
+
+### Response
+
+<ResponseField name="data" type="array" required>
+  Array of user objects.
+  <Expandable title="User object">
+    <ResponseField name="id" type="string (UUID)" required>Internal Airbyte user ID.</ResponseField>
+    <ResponseField name="name" type="string" required>Display name of the user.</ResponseField>
+    <ResponseField name="email" type="string (email)" required>Email address of the user.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example response
+
+```json
+{
+  "data": [
+    {
+      "id": "7d08fd6c-531e-4a00-937e-3d355f253e63",
+      "name": "Jane Smith",
+      "email": "jane@acme.example.com"
+    },
+    {
+      "id": "b2c4e8f1-0d23-4a56-b789-01e2f3a4c5d6",
+      "name": "Bob Jones",
+      "email": "bob@acme.example.com"
+    }
+  ]
+}
+```
+
+<Note>
+To manage user permissions after listing them, use the [Permissions API](/api/permissions).
+</Note>
